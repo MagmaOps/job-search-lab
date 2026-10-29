@@ -10,7 +10,7 @@ import json
 
 from ..config import Settings
 from . import prompts
-from .base import MatchResult, ProfileExtraction
+from .base import DimensionScore, MatchResult, ProfileExtraction
 
 
 class AnthropicProvider:
@@ -33,19 +33,34 @@ class AnthropicProvider:
         if text.startswith("```"):
             text = text.strip("`")
             text = text[text.find("{") : text.rfind("}") + 1]
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            # A truncated response (hit max_tokens mid-string) or non-JSON output. Surface a
+            # clear, actionable message instead of the raw "Unterminated string" parse error.
+            stop = getattr(msg, "stop_reason", None)
+            hint = (
+                " (model output was truncated — raise max_tokens)"
+                if stop == "max_tokens"
+                else ""
+            )
+            raise ValueError(f"AI did not return valid JSON{hint}: {exc}") from None
 
     def extract_profile(
         self, cv_text: str, template: str | None = None
     ) -> ProfileExtraction:
         tmpl = template or prompts.DEFAULT_PROFILE_PROMPT
+        # Profile extraction now returns skills + languages + summary, which can exceed the
+        # default 1024-token budget and truncate the JSON; give it room.
         data = self._complete_json(
-            prompts.render(prompts.PROFILE, tmpl, cv=cv_text[:12000])
+            prompts.render(prompts.PROFILE, tmpl, cv=cv_text[:12000]),
+            max_tokens=2048,
         )
         return ProfileExtraction(
             skills=list(data.get("skills") or []),
             seniority=data.get("seniority"),
             years_experience=data.get("years_experience"),
+            languages=[lang for lang in (data.get("languages") or []) if isinstance(lang, dict)],
             summary=data.get("summary"),
         )
 
@@ -68,7 +83,10 @@ class AnthropicProvider:
             title=job_title,
             description=(job_description or "")[:12000],
         )
-        data = self._complete_json(prompt, max_tokens=1500)
+        # The analyze response carries explanation + a 4-row dimension_scores breakdown +
+        # eligibility fields + translated_summary; 1800 tokens truncated the JSON, so give
+        # it headroom.
+        data = self._complete_json(prompt, max_tokens=3000)
         score = int(data.get("match_score", 0))
         score = max(0, min(100, score))
         return MatchResult(
@@ -78,5 +96,39 @@ class AnthropicProvider:
             missing_requirements=list(data.get("missing_requirements") or []),
             detected_language=data.get("detected_language") or job_language,
             translated_summary=data.get("translated_summary"),
+            dimension_scores=_parse_dimensions(data.get("dimension_scores")),
+            posting_country=data.get("posting_country") or None,
+            eligibility=_norm_eligibility(data.get("eligibility")),
+            eligibility_note=data.get("eligibility_note") or None,
             model=self.model,
         )
+
+
+def _norm_eligibility(value: object) -> str | None:
+    """Coerce the model's eligibility verdict to one of the allowed values, else None."""
+    v = str(value or "").strip().lower()
+    return v if v in ("worldwide", "restricted", "unclear") else None
+
+
+def _parse_dimensions(raw: object) -> list[DimensionScore]:
+    """Coerce the model's dimension_scores array into DimensionScore objects, tolerantly."""
+    out: list[DimensionScore] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict) or not item.get("dimension"):
+            continue
+        try:
+            dim_score = max(0, min(100, int(item.get("score", 0))))
+            weight = float(item.get("weight", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        out.append(
+            DimensionScore(
+                dimension=str(item["dimension"]),
+                score=dim_score,
+                weight=weight,
+                reason=str(item.get("reason", "")),
+            )
+        )
+    return out

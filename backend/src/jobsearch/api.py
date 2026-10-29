@@ -24,7 +24,7 @@ from .models import (
 from .schemas import (
     CVOut,
     JobOut,
-    JobStatusUpdate,
+    JobPatch,
     ManualJobIn,
     ProfileOut,
     ProfileUpdate,
@@ -43,6 +43,7 @@ from .services import (
     prompt_service,
 )
 from .sources import source_names
+from .sources.base import normalize_work_type
 
 settings = get_settings()
 app = FastAPI(title="Job Search Lab", version="0.1.0")
@@ -80,6 +81,8 @@ def list_jobs(
     location: str | None = None,
     company: str | None = None,
     language: str | None = None,
+    work_type: str | None = None,
+    eligibility: str | None = None,
     status: str | None = None,
     sort: str = "score",
 ) -> list[JobOut]:
@@ -106,6 +109,10 @@ def list_jobs(
         q = q.filter(Job.company.ilike(f"%{company}%"))
     if language:
         q = q.filter(Job.language == language)
+    if work_type:
+        q = q.filter(Job.work_type == work_type)
+    if eligibility:
+        q = q.filter(Analysis.eligibility == eligibility)
     if status:
         q = q.filter(Job.status == JobStatus(status))
     if min_score is not None:
@@ -115,7 +122,10 @@ def list_jobs(
 
     out: list[JobOut] = []
     for job, analysis in rows:
-        if analysis and analysis.processing_status == ProcessingStatus.done:
+        if analysis and analysis.processing_status == ProcessingStatus.pending:
+            # Queued (manual re-analyze or backlog) and not yet processed by the worker.
+            state = "pending"
+        elif analysis and analysis.processing_status == ProcessingStatus.done:
             state = "current"
         elif analysis and analysis.processing_status == ProcessingStatus.error:
             state = "error"
@@ -132,6 +142,8 @@ def list_jobs(
                 company=job.company,
                 location=job.location,
                 language=job.language,
+                salary=job.salary,
+                work_type=job.work_type,
                 status=job.status.value,
                 discovered_at=job.discovered_at,
                 analysis_state=state,
@@ -140,6 +152,10 @@ def list_jobs(
                 explanation=analysis.explanation if analysis else None,
                 matching_skills=analysis.matching_skills if analysis else None,
                 missing_requirements=analysis.missing_requirements if analysis else None,
+                dimension_scores=analysis.dimension_scores if analysis else None,
+                posting_country=analysis.posting_country if analysis else None,
+                eligibility=analysis.eligibility if analysis else None,
+                eligibility_note=analysis.eligibility_note if analysis else None,
             )
         )
 
@@ -152,21 +168,31 @@ def list_jobs(
 
 
 @app.patch("/jobs/{job_id}", response_model=JobOut)
-def update_job_status(
-    job_id: int, body: JobStatusUpdate, db: Session = Depends(get_db)
+def update_job(
+    job_id: int, body: JobPatch, db: Session = Depends(get_db)
 ) -> JobOut:
+    """Update a job's user-editable fields (status and/or salary). Only the fields present
+    in the request are changed; sending salary="" clears a stored salary."""
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    try:
-        job.status = JobStatus(body.status)
-    except ValueError:
-        raise HTTPException(422, f"Invalid status '{body.status}'")
+
+    fields = body.model_dump(exclude_unset=True)
+    if "status" in fields and fields["status"] is not None:
+        try:
+            job.status = JobStatus(fields["status"])
+        except ValueError:
+            raise HTTPException(422, f"Invalid status '{fields['status']}'")
+    if "salary" in fields:
+        salary = (fields["salary"] or "").strip()
+        job.salary = salary or None  # empty string clears it
+
     db.commit()
     db.refresh(job)
     return JobOut(
         id=job.id, source=job.source, url=job.url, title=job.title,
         company=job.company, location=job.location, language=job.language,
+        salary=job.salary, work_type=job.work_type,
         status=job.status.value, discovered_at=job.discovered_at,
     )
 
@@ -187,6 +213,8 @@ def add_manual_job(body: ManualJobIn, db: Session = Depends(get_db)) -> JobOut:
         company=body.company,
         location=body.location,
         description=body.description,
+        salary=body.salary,
+        work_type=normalize_work_type(body.work_type),
         content_hash=content_hash(title, body.description),
     )
     db.add(job)
@@ -196,36 +224,53 @@ def add_manual_job(body: ManualJobIn, db: Session = Depends(get_db)) -> JobOut:
     return JobOut(
         id=job.id, source=job.source, url=job.url, title=job.title,
         company=job.company, location=job.location, language=job.language,
+        salary=job.salary, work_type=job.work_type,
         status=job.status.value, discovered_at=job.discovered_at,
         match_score=analysis.match_score if analysis else None,
         translated_summary=analysis.translated_summary if analysis else None,
         explanation=analysis.explanation if analysis else None,
         matching_skills=analysis.matching_skills if analysis else None,
         missing_requirements=analysis.missing_requirements if analysis else None,
+        dimension_scores=analysis.dimension_scores if analysis else None,
+        posting_country=analysis.posting_country if analysis else None,
+        eligibility=analysis.eligibility if analysis else None,
+        eligibility_note=analysis.eligibility_note if analysis else None,
     )
 
 
 @app.post("/jobs/{job_id}/reanalyze")
 def reanalyze(job_id: int, db: Session = Depends(get_db)) -> dict:
-    ok = analysis_service.reanalyze_job(db, job_id)
+    """Queue a single job for re-analysis. Returns immediately; the worker does the work,
+    so it completes even if the browser tab is closed. Poll /jobs to see it go
+    pending → current."""
+    ok = analysis_service.enqueue_job(db, job_id)
     if not ok:
         raise HTTPException(400, "No active CV or job not found.")
-    return {"status": "reanalyzed", "job_id": job_id}
+    return {"status": "queued", "job_id": job_id}
 
 
 @app.post("/analyze")
-def analyze(
-    limit: int = Query(50, ge=1, le=500), db: Session = Depends(get_db)
-) -> dict:
-    """Analyze already-stored jobs that have no completed analysis for the active CV.
+def analyze(db: Session = Depends(get_db)) -> dict:
+    """Queue all un-analyzed stored jobs for scoring against the active CV.
 
-    This is the action to run after uploading a new CV: it scores the existing backlog
-    against the new CV without collecting anything. Cached (unchanged) analyses are skipped.
+    This is the action to run after uploading a new CV. It returns immediately; the worker
+    scores the backlog in the background (so closing the page does not stop it). Jobs with
+    a cached up-to-date analysis are not re-queued.
     """
     if cv_service.get_active_cv(db) is None:
         raise HTTPException(400, "No active CV. Upload a CV first.")
-    processed = analysis_service.analyze_pending(db, limit=limit)
-    return {"analyzed": processed}
+    queued = analysis_service.enqueue_all_pending(db)
+    return {"queued": queued}
+
+
+@app.post("/jobs/purge-irrelevant")
+def purge_irrelevant(db: Session = Depends(get_db)) -> dict:
+    """One-time cleanup: delete stored jobs whose title is not DevOps-relevant.
+
+    Useful to clear a backlog collected before the relevance filter existed. Manual jobs
+    are preserved. Destructive — returns the list of removed titles.
+    """
+    return collect_service.purge_irrelevant_jobs(db)
 
 
 # ── Queries ───────────────────────────────────────────────────────────────

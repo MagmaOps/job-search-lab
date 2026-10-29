@@ -43,6 +43,25 @@ def _run_cycle() -> None:
         db.close()
 
 
+def _drain_analysis_queue() -> None:
+    """Frequent tick: process any jobs queued for analysis (manual re-analyze / backlog).
+
+    Runs on a short interval so a user's 'Re-analyze' click resolves within seconds and the
+    dashboard spinner clears, independent of the 6-hourly collection schedule. The work
+    happens here in the worker, so it continues even if the browser tab that triggered it
+    is closed.
+    """
+    db = SessionLocal()
+    try:
+        processed = analysis_service.analyze_pending(db, limit=25)
+        if processed:
+            log.info("analysis queue: processed=%s", processed)
+    except Exception:
+        log.exception("analysis queue tick failed")
+    finally:
+        db.close()
+
+
 def _acquire_leader(conn) -> bool:
     """Try to grab the session-scoped advisory lock. Non-blocking."""
     return bool(conn.execute(text("SELECT pg_try_advisory_lock(:k)"),
@@ -87,6 +106,15 @@ def _schedule_and_block(settings, stop: dict) -> None:
         _run_cycle,
         CronTrigger.from_crontab(settings.collect_schedule),
         id="collect",
+        max_instances=1,
+        coalesce=True,
+    )
+    # Drain the manual analysis queue every few seconds so re-analyze feedback is prompt.
+    scheduler.add_job(
+        _drain_analysis_queue,
+        "interval",
+        seconds=settings.analysis_poll_seconds,
+        id="analysis_queue",
         max_instances=1,
         coalesce=True,
     )

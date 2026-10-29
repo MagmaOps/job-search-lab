@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # Scheduling / worker
     collect_schedule: str = "0 */6 * * *"
     leader_election: bool = False
+    # How often the worker drains the manual (re)analysis queue so dashboard feedback is prompt.
+    analysis_poll_seconds: int = 5
 
     # Misc
     cors_origins: str = "http://localhost:3000"

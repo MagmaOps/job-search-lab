@@ -13,7 +13,7 @@ import re
 
 import feedparser
 
-from .base import RawJob
+from .base import RawJob, normalize_work_type
 from .registry import register_source
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -57,6 +57,10 @@ class RssSource:
                     description=_strip_html(
                         entry.get("summary") or entry.get("description")
                     ),
+                    # WWR DevOps feed is remote; title/region may still say hybrid/onsite.
+                    work_type=normalize_work_type(
+                        f"{raw_title} {region or ''}", remote_flag=True
+                    ),
                     extra={"feed": url},
                 )
             )
@@ -67,7 +71,9 @@ class RssSource:
         feed = feedparser.parse(content)
         jobs: list[RawJob] = []
         for entry in feed.entries:
-            company, title = _split_company_title(entry.get("title", ""))
+            raw_title = entry.get("title", "")
+            company, title = _split_company_title(raw_title)
+            region = entry.get("region") or entry.get("location")
             jobs.append(
                 RawJob(
                     title=title,
@@ -75,9 +81,12 @@ class RssSource:
                     url=entry.get("link"),
                     source_job_id=entry.get("id") or entry.get("guid"),
                     company=company,
-                    location=entry.get("region") or entry.get("location") or "Remote",
+                    location=region or "Remote",
                     description=_strip_html(
                         entry.get("summary") or entry.get("description")
+                    ),
+                    work_type=normalize_work_type(
+                        f"{raw_title} {region or ''}", remote_flag=True
                     ),
                     extra={"feed": feed_url},
                 )

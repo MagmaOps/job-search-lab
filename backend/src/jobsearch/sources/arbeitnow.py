@@ -6,7 +6,7 @@ import html
 import re
 
 from ._http import get_client
-from .base import RawJob
+from .base import RawJob, normalize_work_type
 from .registry import register_source
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -46,6 +46,12 @@ class ArbeitnowSource:
                     company=item.get("company_name"),
                     location=item.get("location") or ("Remote" if item.get("remote") else None),
                     description=_strip_html(item.get("description")),
+                    # Arbeitnow exposes an explicit remote boolean; fall back to the title
+                    # and job-type tags for hybrid/onsite hints.
+                    work_type=normalize_work_type(
+                        f"{title} {' '.join(item.get('job_types') or [])}",
+                        remote_flag=bool(item.get("remote")),
+                    ),
                     extra={"tags": item.get("tags") or [], "remote": item.get("remote")},
                 )
             )

@@ -108,3 +108,59 @@ th { color: var(--muted); font-weight: 600; }
 .detail { font-size: 13px; color: var(--muted); margin-top: 6px; }
 label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .field { margin-bottom: 12px; }
+
+/* Wider, responsive dashboard so the extra columns are not cramped.
+   Fluid up to the viewport (minus gutters), capped so it stays readable on ultrawide. */
+.container { width: min(100%, 1940px); max-width: none; margin-inline: auto; padding: 24px; }
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 980px; }
+th, td { padding: 9px 8px; }
+td .chip { white-space: nowrap; }
+
+/* Work-type chips (dashboard Type column) */
+.chip.wt-remote { background: rgba(79,156,249,0.18); color: var(--accent); }
+.chip.wt-hybrid { background: rgba(210,153,34,0.18); color: var(--warn); }
+.chip.wt-onsite { background: rgba(138,148,166,0.20); color: var(--text); }
+
+/* Eligibility chips (dashboard Eligibility column) */
+.chip.elig-worldwide  { background: rgba(63,185,80,0.18); color: var(--good); }
+.chip.elig-restricted { background: rgba(248,81,73,0.16); color: var(--bad); }
+.chip.elig-unclear    { background: rgba(138,148,166,0.18); color: var(--muted); }
+
+/* Per-dimension score breakdown (expanded job details) */
+.breakdown { margin: 10px 0; }
+.breakdown .dims { width: auto; margin-top: 6px; }
+.breakdown .dims td { border-bottom: none; padding: 4px 10px 4px 0; vertical-align: middle; }
+.dim-name { white-space: nowrap; font-weight: 600; }
+.dim-bar { width: 160px; }
+.dim-bar .bar {
+  display: inline-block;
+  height: 8px;
+  border-radius: 4px;
+  min-width: 2px;
+  vertical-align: middle;
+}
+.dim-bar .bar.high { background: var(--good); }
+.dim-bar .bar.mid  { background: var(--warn); }
+.dim-bar .bar.low  { background: var(--bad); }
+.dim-bar .bar.na   { background: var(--border); }
+.dim-score { font-weight: 700; width: 36px; }
+.dim-weight { width: 44px; font-size: 12px; }
+.dim-reason { font-size: 12px; max-width: 480px; }
+
+/* Per-job analysis spinner (dashboard Score cell while a job is queued/analyzing) */
+.analyzing { display: inline-flex; align-items: center; gap: 7px; }
+.spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  vertical-align: middle;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* The "pending" freshness state reuses the accent as a faint pulsing dot. */
+.astate.pending { background: var(--accent); }

@@ -62,6 +62,20 @@ SEED_QUERIES = [
         source_config={"keyword": "devops", "remote_only": True},
     ),
     dict(
+        name="DevOps — Freehire (EU/remote)",
+        source="freehire",
+        keywords="DevOps Engineer",
+        work_type="remote",
+        location="EU / Remote",
+        source_config={
+            "query": "devops",
+            "regions": ["eu", "global"],
+            "work_mode": "remote",
+            "posted_within_days": 30,
+            "limit": 50,
+        },
+    ),
+    dict(
         name="DevOps — LinkedIn (manual reference, EU remote)",
         source="linkedin",  # not a fetchable source → skipped by the collector
         keywords="DevOps Engineer",
@@ -74,6 +88,19 @@ SEED_QUERIES = [
 ]
 
 
+# Additive column top-ups for tables that already exist from an earlier version.
+# create_all() creates missing tables but never alters an existing one, so a new column
+# on an existing table is added here. Each statement is idempotent (IF NOT EXISTS).
+_COLUMN_TOPUPS = (
+    'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS dimension_scores JSONB',
+    'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS posting_country VARCHAR(64)',
+    'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS eligibility VARCHAR(16)',
+    'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS eligibility_note TEXT',
+    'ALTER TABLE job ADD COLUMN IF NOT EXISTS salary VARCHAR(128)',
+    'ALTER TABLE job ADD COLUMN IF NOT EXISTS work_type VARCHAR(16)',
+)
+
+
 def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
 
@@ -84,6 +111,8 @@ def main() -> None:
     with engine.begin() as conn:
         conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _INIT_LOCK_KEY})
         Base.metadata.create_all(bind=conn)
+        for stmt in _COLUMN_TOPUPS:
+            conn.execute(text(stmt))
     seed()
 
 

@@ -12,7 +12,7 @@ import html
 import re
 
 from ._http import get_client
-from .base import RawJob
+from .base import RawJob, format_salary, normalize_work_type
 from .registry import register_source
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -53,6 +53,14 @@ class RemoteOkSource:
                     company=item.get("company"),
                     location=item.get("location") or "Remote",
                     description=_strip_html(item.get("description")),
+                    salary=format_salary(
+                        item.get("salary_min"),
+                        item.get("salary_max"),
+                        currency="USD",
+                        period="year",
+                    ),
+                    # RemoteOK is a remote-only board; the location string confirms it.
+                    work_type=normalize_work_type(item.get("location"), remote_flag=True),
                     extra={"tags": tags, "salary_min": item.get("salary_min")},
                 )
             )

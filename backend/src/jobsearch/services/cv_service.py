@@ -63,6 +63,7 @@ def ingest_cv(db: Session, filename: str, data: bytes) -> CV:
             "skills": extraction.skills,
             "seniority": extraction.seniority,
             "years_experience": extraction.years_experience,
+            "languages": extraction.languages,
             "summary": extraction.summary,
         },
         is_active=True,
@@ -96,6 +97,7 @@ def effective_profile(cv: CV) -> dict:
     return {
         "skills": derived.get("skills", []),
         "seniority": derived.get("seniority"),
+        "languages": derived.get("languages", []),
         "must_have_skills": (mp.must_have_skills if mp else []) or [],
         "nice_to_have_skills": (mp.nice_to_have_skills if mp else []) or [],
         "dealbreakers": (mp.dealbreakers if mp else []) or [],

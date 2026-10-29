@@ -14,6 +14,27 @@ class ProfileExtraction:
     seniority: str | None = None
     years_experience: int | None = None
     summary: str | None = None
+    # Languages the candidate works in, with self-declared level, e.g.
+    # [{"language": "English", "level": "fluent"}]. Feeds the analyze prompt's Language Gate.
+    languages: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class DimensionScore:
+    """One scored dimension behind the overall match_score, with its reasoning."""
+
+    dimension: str
+    score: int  # 0-100
+    weight: float  # share of the weighted average, e.g. 0.30
+    reason: str = ""
+
+    def as_dict(self) -> dict:
+        return {
+            "dimension": self.dimension,
+            "score": self.score,
+            "weight": self.weight,
+            "reason": self.reason,
+        }
 
 
 @dataclass
@@ -26,6 +47,19 @@ class MatchResult:
     missing_requirements: list[str] = field(default_factory=list)
     detected_language: str | None = None
     translated_summary: str | None = None
+    # Per-dimension breakdown explaining the overall score. Empty when the provider
+    # does not return one.
+    dimension_scores: list[DimensionScore] = field(default_factory=list)
+    # Where the role appears to be posted / hire from, inferred from the description
+    # (salary in US cities, "US only", named country, etc.). Best-effort guess.
+    posting_country: str | None = None
+    # Candidate eligibility verdict for a non-local (e.g. EU) applicant:
+    #   "worldwide"  — explicitly open to anywhere, or clearly no location restriction
+    #   "restricted" — limited to a country/region the candidate is likely outside of
+    #   "unclear"    — not stated; a guess with low confidence
+    eligibility: str | None = None
+    # One short sentence of evidence for the country/eligibility call.
+    eligibility_note: str | None = None
     model: str = "stub"
 
 

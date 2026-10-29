@@ -3,6 +3,13 @@
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export interface DimensionScore {
+  dimension: string;
+  score: number;
+  weight: number;
+  reason: string;
+}
+
 export interface Job {
   id: number;
   source: string;
@@ -11,14 +18,20 @@ export interface Job {
   company: string | null;
   location: string | null;
   language: string | null;
+  salary: string | null;
+  work_type: string | null; // remote | hybrid | onsite | null
   status: string;
   discovered_at: string;
-  analysis_state: "current" | "outdated" | "none" | "error";
+  analysis_state: "current" | "outdated" | "none" | "error" | "pending";
   match_score: number | null;
   translated_summary: string | null;
   explanation: string | null;
   matching_skills: string[] | null;
   missing_requirements: string[] | null;
+  dimension_scores: DimensionScore[] | null;
+  posting_country: string | null;
+  eligibility: "worldwide" | "restricted" | "unclear" | null;
+  eligibility_note: string | null;
 }
 
 export interface Query {
@@ -99,12 +112,13 @@ export const api = {
   },
   setJobStatus: (id: number, status: string) =>
     req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
+  setJobSalary: (id: number, salary: string) =>
+    req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ salary }) }),
   reanalyze: (id: number) => req(`/jobs/${id}/reanalyze`, { method: "POST" }),
   addManual: (body: Record<string, unknown>) =>
     req<Job>(`/jobs/manual`, { method: "POST", body: JSON.stringify(body) }),
 
-  analyze: (limit = 50) =>
-    req<{ analyzed: number }>(`/analyze?limit=${limit}`, { method: "POST" }),
+  analyze: () => req<{ queued: number }>(`/analyze`, { method: "POST" }),
 
   status: () => req<Status>(`/status`),
 

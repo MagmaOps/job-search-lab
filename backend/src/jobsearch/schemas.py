@@ -20,6 +20,8 @@ class JobOut(ORMModel):
     company: str | None
     location: str | None
     language: str | None
+    salary: str | None = None
+    work_type: str | None = None  # remote | hybrid | onsite | None
     status: str
     discovered_at: datetime
     # analysis freshness vs the active CV: current | outdated | none | error
@@ -30,10 +32,23 @@ class JobOut(ORMModel):
     explanation: str | None = None
     matching_skills: list | None = None
     missing_requirements: list | None = None
+    # Per-dimension score breakdown: [{dimension, score, weight, reason}]
+    dimension_scores: list | None = None
+    # Inferred posting location + eligibility verdict (worldwide|restricted|unclear)
+    posting_country: str | None = None
+    eligibility: str | None = None
+    eligibility_note: str | None = None
 
 
 class JobStatusUpdate(BaseModel):
     status: str  # new|saved|dismissed|applied|interview
+
+
+class JobPatch(BaseModel):
+    """Partial update of a job's user-editable fields from the dashboard."""
+
+    status: str | None = None  # new|saved|dismissed|applied|interview
+    salary: str | None = None  # free-text salary range; "" clears it
 
 
 class ManualJobIn(BaseModel):
@@ -42,6 +57,8 @@ class ManualJobIn(BaseModel):
     company: str | None = None
     location: str | None = None
     description: str | None = None
+    salary: str | None = None
+    work_type: str | None = None  # remote | hybrid | onsite
 
 
 # ── Queries ───────────────────────────────────────────────────────────────

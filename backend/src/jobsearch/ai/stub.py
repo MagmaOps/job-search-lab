@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from .base import MatchResult, ProfileExtraction
+from .base import DimensionScore, MatchResult, ProfileExtraction
 
 try:  # langdetect is optional at runtime; degrade gracefully
     from langdetect import detect as _detect_lang
@@ -28,6 +28,63 @@ def _tokens(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9+/#.]+", (text or "").lower()))
 
 
+# Common language names the stub recognizes when they appear in CV text. The real
+# provider extracts levels from context; the stub only records presence (level=None).
+_KNOWN_LANGUAGES = [
+    "english", "german", "french", "spanish", "italian", "portuguese", "dutch",
+    "danish", "swedish", "norwegian", "finnish", "polish", "czech", "russian",
+    "ukrainian", "mandarin", "chinese", "japanese", "korean", "arabic", "hindi",
+]
+
+
+def _detect_cv_languages(cv_text: str) -> list[dict]:
+    """Best-effort language list from CV text (names only; level unknown offline)."""
+    toks = _tokens(cv_text)
+    found = [name for name in _KNOWN_LANGUAGES if name in toks]
+    return [{"language": name.capitalize(), "level": None} for name in found]
+
+
+# Phrases that signal a role is restricted to the US (offline heuristic for eligibility).
+_US_RESTRICTED = (
+    "us only", "u.s. only", "united states only", "must be based in the us",
+    "us-based", "u.s.-based", "based in the united states",
+    "authorized to work in the united states", "work authorization in the us",
+    "us citizen", "u.s. citizen", "must reside in the united states",
+    "within the united states", "us residents only",
+)
+_WORLDWIDE = (
+    "worldwide", "work from anywhere", "anywhere in the world", "any country",
+    "fully remote, global", "remote - global", "globally remote", "location: anywhere",
+)
+_EU_RESTRICTED = (
+    "eu only", "eu-based", "based in the eu", "within the eu", "eea only",
+    "must be based in europe", "europe only", "eu residents",
+)
+
+
+def _guess_location_eligibility(text: str) -> tuple[str | None, str | None, str | None]:
+    """Heuristic (country, eligibility, note) from job text, mirroring the prompt's rules.
+
+    Offline best-effort only; the real provider reasons over the full description.
+    """
+    low = text.lower()
+    if any(p in low for p in _WORLDWIDE):
+        return None, "worldwide", "Posting states it is open worldwide / work-from-anywhere."
+    if any(p in low for p in _US_RESTRICTED):
+        return ("United States", "restricted",
+                "Posting ties the role to the US (US-only / work-authorization wording).")
+    if any(p in low for p in _EU_RESTRICTED):
+        return ("EU", "restricted", "Posting limits the role to the EU/Europe.")
+    # USD salary with a US state abbreviation nearby is a strong US signal.
+    if re.search(r"\$\s?\d{2,3}[,k]", low) and re.search(
+        r"\b(ca|ny|tx|wa|co|ma|il|ga|fl|nc|va|or|az)\b", low
+    ):
+        return ("United States", "restricted",
+                "Salary quoted in USD against US-state locations suggests a US-only role.")
+    # Nothing explicit: a remote board listing leans open, but mark it a guess.
+    return None, "unclear", "No location restriction stated; eligibility not confirmed."
+
+
 class StubProvider:
     model = "stub"
 
@@ -40,6 +97,7 @@ class StubProvider:
             skills=skills or _DEFAULT_SKILLS[:5],
             seniority="mid",
             years_experience=None,
+            languages=_detect_cv_languages(cv_text),
             summary="Baseline profile derived without an AI key (stub).",
         )
 
@@ -55,6 +113,7 @@ class StubProvider:
     ) -> MatchResult:
         text = f"{job_title}\n{job_description}"
         job_toks = _tokens(text)
+        country, eligibility, elig_note = _guess_location_eligibility(text)
 
         must = [s.lower() for s in effective_profile.get("must_have_skills", [])]
         nice = [s.lower() for s in effective_profile.get("nice_to_have_skills", [])]
@@ -65,15 +124,54 @@ class StubProvider:
         matched = sorted({s for s in wanted if s and s in job_toks})
         missing = sorted({s for s in must if s and s not in job_toks})
 
-        # Score: weight must-haves heavily, nice-to-haves/derived lightly.
+        # ── Per-dimension scores (weights mirror the analyze prompt's rubric) ──
+        # 1. Technical skills (30%): must-haves weighted heavily, extras lightly.
         must_hit = sum(1 for s in must if s in job_toks)
         nice_hit = sum(1 for s in (nice + derived) if s in job_toks)
         must_total = max(len(must), 1)
-        score = int(70 * (must_hit / must_total) + min(30, nice_hit * 5))
+        technical = int(70 * (must_hit / must_total) + min(30, nice_hit * 5))
 
-        # Dealbreakers cap the score hard.
+        # 2. Experience/function match (25%): any profile skill surfacing in the job.
+        derived_hit = sum(1 for s in derived if s in job_toks)
+        experience = min(100, 40 + derived_hit * 15) if derived else 40
+
+        # 3. Seniority fit (15%): does the job text mention the profile's seniority band?
+        min_sen = (effective_profile.get("min_seniority") or "").lower()
+        seniority = 70
+        if min_sen:
+            seniority = 85 if min_sen in text.lower() else 55
+
+        # 4. Career/role alignment (30%): proxied by overall skill overlap presence.
+        alignment = 75 if matched else 45
+
+        dims = [
+            DimensionScore("Technical skills", technical, 0.30,
+                           f"{must_hit}/{must_total} must-haves and {nice_hit} other skill(s) present in the posting."),
+            DimensionScore("Experience match", experience, 0.25,
+                           f"{derived_hit} CV-derived skill(s) appear in the posting text."),
+            DimensionScore("Seniority fit", seniority, 0.15,
+                           f"Profile min seniority '{min_sen or 'unset'}' "
+                           + ("named in" if seniority >= 85 else "not clearly in") + " the posting."),
+            DimensionScore("Career alignment", alignment, 0.30,
+                           "Role overlaps the candidate's skills." if matched
+                           else "Little overlap with the candidate's skills."),
+        ]
+        score = int(round(sum(d.score * d.weight for d in dims)))
+
+        # Mirror the analyze-prompt gates/caps so the offline pipeline behaves like the
+        # documented rules (dealbreaker > eligibility/clearance > the weighted score).
+        caps: list[int] = []
         if any(d in job_toks for d in dealbreakers):
-            score = min(score, 10)
+            caps.append(10)
+        clearance_terms = (
+            "security clearance", "clearance required", "must be a citizen",
+            "citizenship required", "permanent resident",
+        )
+        if any(term in text.lower() for term in clearance_terms):
+            caps.append(15)
+            missing = sorted(set(missing) | {"eligibility / clearance requirement"})
+        if caps:
+            score = min(score, *caps)
 
         score = max(0, min(100, score))
 
@@ -87,6 +185,7 @@ class StubProvider:
         explanation = (
             f"Stub analysis: matched {len(matched)} profile skill(s)"
             + (f", missing must-haves: {', '.join(missing)}" if missing else "")
+            + (" (score capped by a dealbreaker or eligibility gate)" if caps else "")
             + ". Configure an Anthropic key for real analysis."
         )
 
@@ -97,5 +196,9 @@ class StubProvider:
             missing_requirements=missing,
             detected_language=lang,
             translated_summary=None,
+            dimension_scores=dims,
+            posting_country=country,
+            eligibility=eligibility,
+            eligibility_note=elig_note,
             model=self.model,
         )

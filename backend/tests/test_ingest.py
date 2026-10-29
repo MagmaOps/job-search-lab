@@ -47,3 +47,30 @@ def test_ingest_many_counts(db):
     result = ingest_many(db, raws)
     assert result.inserted == 2
     assert result.skipped == 1
+
+
+def test_salary_and_work_type_persisted(db):
+    ingest_job(db, _raw(salary="USD 90,000 – 120,000/year", work_type="remote"))
+    db.commit()
+    job = db.query(Job).one()
+    assert job.salary == "USD 90,000 – 120,000/year"
+    assert job.work_type == "remote"
+
+
+def test_salary_backfilled_on_unchanged_job_without_reanalysis(db):
+    # First sighting has no salary.
+    ingest_job(db, _raw(salary=None, work_type="remote"))
+    db.commit()
+    job = db.query(Job).one()
+    db.add(Analysis(job_id=job.id, cv_id=1, processing_status=ProcessingStatus.done,
+                    match_score=80))
+    db.commit()
+
+    # Same content, now with a salary → skipped (no re-analysis) but salary backfilled.
+    outcome = ingest_job(db, _raw(salary="EUR 70,000/year", work_type="remote"))
+    db.commit()
+    assert outcome == "skipped"
+    job = db.query(Job).one()
+    assert job.salary == "EUR 70,000/year"
+    # The completed analysis is preserved (metadata change must not drop it).
+    assert db.query(Analysis).count() == 1

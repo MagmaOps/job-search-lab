@@ -121,6 +121,10 @@ class Job(Base):
     location: Mapped[str | None] = mapped_column(String(256))
     description: Mapped[str | None] = mapped_column(Text)
     language: Mapped[str | None] = mapped_column(String(16))
+    # Human-readable salary range as the source stated it, e.g. "USD 90,000 – 120,000/year".
+    salary: Mapped[str | None] = mapped_column(String(128))
+    # Work arrangement: "remote" | "hybrid" | "onsite" | None (unknown).
+    work_type: Mapped[str | None] = mapped_column(String(16), index=True)
 
     discovered_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
@@ -161,6 +165,15 @@ class Analysis(Base):
     explanation: Mapped[str | None] = mapped_column(Text)
     matching_skills: Mapped[list | None] = mapped_column(JSONB)
     missing_requirements: Mapped[list | None] = mapped_column(JSONB)
+    # Per-dimension reasoning behind match_score: a list of
+    # {"dimension": str, "score": int, "weight": float, "reason": str}. Lets the
+    # dashboard explain WHY a job scored what it did. Null for pre-breakdown analyses.
+    dimension_scores: Mapped[list | None] = mapped_column(JSONB)
+    # Inferred posting location + applicant-eligibility verdict (advisory; does not affect
+    # match_score). eligibility ∈ {worldwide, restricted, unclear}.
+    posting_country: Mapped[str | None] = mapped_column(String(64))
+    eligibility: Mapped[str | None] = mapped_column(String(16), index=True)
+    eligibility_note: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 

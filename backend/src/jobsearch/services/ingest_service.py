@@ -58,13 +58,21 @@ def ingest_job(db: Session, raw: RawJob) -> str:
                 location=raw.location,
                 description=raw.description,
                 language=raw.language,
+                salary=raw.salary,
+                work_type=raw.work_type,
                 content_hash=chash,
             )
         )
         return "inserted"
 
     if existing.content_hash == chash:
-        # Known job, unchanged → do not re-analyze (design requirement 5).
+        # Known job, unchanged content → do not re-analyze (design requirement 5). Still
+        # backfill salary/work_type if the source now provides what we were missing; these
+        # are metadata, not content identity, so they don't trigger re-analysis.
+        if raw.salary and not existing.salary:
+            existing.salary = raw.salary
+        if raw.work_type and not existing.work_type:
+            existing.work_type = raw.work_type
         return "skipped"
 
     # Content changed: update fields and drop stale analyses so it gets re-analyzed.
@@ -73,6 +81,8 @@ def ingest_job(db: Session, raw: RawJob) -> str:
     existing.location = raw.location
     existing.description = raw.description
     existing.language = raw.language
+    existing.salary = raw.salary
+    existing.work_type = raw.work_type
     existing.content_hash = chash
     db.query(Analysis).filter(Analysis.job_id == existing.id).delete()
     return "updated"
