@@ -57,21 +57,23 @@ All secrets stay server-side. See [`.env.example`](.env.example) for the full li
 ## Deployment (k3s)
 
 This repo produces:
-1. Two **Docker images** — `jobsearch-backend` (api + worker) and `jobsearch-web`.
-2. A **Kustomize base** under `deploy/base/` with patch points and no homelab-specific
-   values.
+1. Two **Docker images** on Docker Hub — `magmakomer/jobsearch-backend` (api + worker) and
+   `magmakomer/jobsearch-web`.
+2. A **Kustomize base** under `k8s/base/` with patch points and no homelab-specific values.
+   The api and web are **Argo `Rollout`s** (blue-green); the worker is a leader-elected
+   Deployment.
 
-The separate `k3s-lab` repo consumes the base, installs the CloudNativePG operator,
-defines the `Cluster` CR, and applies overlays/patches/secrets/ingress.
+The separate `k3s-lab` repo consumes the base, installs the CloudNativePG and Argo
+Rollouts operators, defines the `Cluster` CR, and applies overlays/patches/secrets/ingress.
 
 ### Build & push the images
 
+One command (from the repo root) builds both (versioned) and pushes to Docker Hub:
+
 ```bash
-docker build -t ghcr.io/youruser/jobsearch-backend:v0.1.0 ./backend
-docker build -t ghcr.io/youruser/jobsearch-web:v0.1.0 \
-  --build-arg NEXT_PUBLIC_API_URL=http://jobsearch.home.lan/api ./web
-docker push ghcr.io/youruser/jobsearch-backend:v0.1.0
-docker push ghcr.io/youruser/jobsearch-web:v0.1.0
+./build-push.sh v1.0.0
+# optional custom web API URL (baked into the Next.js bundle at build time):
+./build-push.sh v1.0.0 http://jobsearch.lab.local/api
 ```
 
 ### What `k3s-lab` provides
@@ -87,14 +89,14 @@ The base references these by name; `k3s-lab` creates them:
 - **Overlay** that patches the ingress host, `CORS_ORIGINS`, image tags, replicas, and
   resources.
 
-Reference manifests to copy into `k3s-lab` live under
-[`deploy/k3s-lab-reference/`](deploy/k3s-lab-reference/): an example CNPG `Cluster`, the
-`jobsearch-ai` Secret, and an example overlay.
+The cluster-side wiring (ArgoCD `Application`, overlays, the CNPG `Cluster`, and the
+`jobsearch-ai` sealed Secret) lives in the separate `k3s-lab` repo under
+`apps/job-search-lab/`.
 
 Render the base locally to inspect it:
 
 ```bash
-kubectl kustomize deploy/base
+kubectl kustomize k8s/base
 ```
 
 ### High availability

@@ -7,7 +7,8 @@ don't add product features or abstractions beyond what a task needs.
 ## Layout
 - `backend/` — FastAPI API + worker, Python 3.12, package `jobsearch` under `src/`.
 - `web/` — Next.js dashboard (dashboard, CV, queries, prompts pages).
-- `deploy/` — Dockerfile + Kustomize base (consumed by a separate `k3s-lab` repo).
+- `k8s/base/` — Kustomize base (consumed by a separate `k3s-lab` repo). `build-push.sh`
+  (repo root) builds + pushes the two Docker Hub images.
 - `docs/` — `design.md` (architecture, authoritative), `kiro_job_search_task.md` (the task),
   plus analyses: `repo-comparison.md`, `extracted-prompts.md`.
 - `ai-job-search/` — a **third-party reference clone** (`github.com/ai-job-search-dev/...`),

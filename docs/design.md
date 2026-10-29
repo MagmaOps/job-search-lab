@@ -222,7 +222,7 @@ The Kustomize base references Secret **names only** — no real values in this r
 ## 9. Packaging & deployment (requirement 1 & 9)
 - **Dockerfile** builds one image serving api/worker (Python) and a separate web image
   (Next.js) — or a single multi-stage image with role via command. (Decide at build.)
-- **Kustomize base** (`deploy/base/`): Deployments (web, api, worker), Services, Ingress,
+- **Kustomize base** (`k8s/base/`): Deployments (web, api, worker), Services, Ingress,
   ConfigMap, HPA/PDB, probes, and a reference to the DB Secret + CNPG `-rw` Service.
   Exposes patch points (image tags, replicas, resources, env, ingress host, storage class)
   with **no hardcoded homelab values**.
