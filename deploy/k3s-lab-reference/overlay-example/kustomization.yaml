@@ -1,0 +1,40 @@
+# REFERENCE ONLY — example of how the k3s-lab repo consumes this app's base.
+# Copy this shape into k3s-lab (adjusting the `resources` path/ref) and patch per-homelab.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: jobsearch
+
+resources:
+  # Point at this repo's base — locally via relative path, or remotely via a pinned ref:
+  #   github.com/<you>/job-search-lab/deploy/base?ref=v0.1.0
+  - ../../base
+
+images:
+  - name: jobsearch-backend
+    newName: ghcr.io/youruser/jobsearch-backend
+    newTag: v0.1.0
+  - name: jobsearch-web
+    newName: ghcr.io/youruser/jobsearch-web
+    newTag: v0.1.0
+
+# Patch the real homelab values that the base deliberately leaves as placeholders.
+patches:
+  - target:
+      kind: Ingress
+      name: jobsearch
+    patch: |
+      - op: replace
+        path: /spec/rules/0/host
+        value: jobsearch.home.lan
+  - target:
+      kind: ConfigMap
+      name: jobsearch-config
+    patch: |
+      - op: replace
+        path: /data/CORS_ORIGINS
+        value: http://jobsearch.home.lan
+  # The web image must be BUILT with the correct NEXT_PUBLIC_API_URL (build-time arg),
+  # because Next.js inlines NEXT_PUBLIC_* at build time. Patching the env at runtime is
+  # not sufficient. See the README "Web API URL" note. Set it to your ingress + /api, e.g.
+  #   NEXT_PUBLIC_API_URL=http://jobsearch.home.lan/api

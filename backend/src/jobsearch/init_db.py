@@ -1,0 +1,106 @@
+"""Create tables and seed the predefined DevOps query.
+
+Idempotent: safe to run on every container start. Uses create_all (no destructive ops)
+and only inserts the seed query if no queries exist yet.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from sqlalchemy import func, text
+
+from .config import get_settings
+from .db import SessionLocal, engine
+from .models import Base, SearchQuery
+
+# Serialize schema creation/seed so concurrent api+worker startup can't collide
+# (e.g. both trying to CREATE TYPE job_status at once).
+_INIT_LOCK_KEY = 0x10B5_1217
+
+log = logging.getLogger("jobsearch.init_db")
+
+# The predefined DevOps-focused queries (design: RSS/API auto sources + LinkedIn reference).
+LINKEDIN_EU_REMOTE_URL = (
+    "https://www.linkedin.com/jobs/search/?keywords=DevOps%20Engineer"
+    "&location=European%20Union&geoId=91000000&f_WT=2&f_TPR=r604800&sortBy=DD"
+)
+
+SEED_QUERIES = [
+    dict(
+        name="DevOps — We Work Remotely",
+        source="rss",
+        keywords="DevOps Engineer",
+        work_type="remote",
+        location="Remote",
+        source_config={
+            "url": "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss"
+        },
+    ),
+    dict(
+        name="DevOps — RemoteOK",
+        source="remoteok",
+        keywords="DevOps Engineer",
+        work_type="remote",
+        location="Remote",
+        source_config={"tag": "devops"},
+    ),
+    dict(
+        name="DevOps — Remotive",
+        source="remotive",
+        keywords="DevOps Engineer",
+        work_type="remote",
+        location="Remote",
+        source_config={"category": "devops", "limit": 50},
+    ),
+    dict(
+        name="DevOps — Arbeitnow (EU)",
+        source="arbeitnow",
+        keywords="DevOps",
+        work_type="remote",
+        location="EU / Remote",
+        source_config={"keyword": "devops", "remote_only": True},
+    ),
+    dict(
+        name="DevOps — LinkedIn (manual reference, EU remote)",
+        source="linkedin",  # not a fetchable source → skipped by the collector
+        keywords="DevOps Engineer",
+        work_type="remote",
+        location="European Union",
+        enabled=False,
+        source_config={"mode": "manual"},
+        reference_url=LINKEDIN_EU_REMOTE_URL,
+    ),
+]
+
+
+def create_tables() -> None:
+    Base.metadata.create_all(bind=engine)
+
+
+def main() -> None:
+    logging.basicConfig(level=get_settings().log_level)
+    # Hold a transaction-scoped advisory lock so only one process initializes at a time.
+    with engine.begin() as conn:
+        conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _INIT_LOCK_KEY})
+        Base.metadata.create_all(bind=conn)
+    seed()
+
+
+def seed() -> None:
+    db = SessionLocal()
+    try:
+        existing = db.query(func.count(SearchQuery.id)).scalar() or 0
+        if existing:
+            log.info("queries already present (%s); skipping seed", existing)
+            return
+        for q in SEED_QUERIES:
+            db.add(SearchQuery(**q))
+        db.commit()
+        log.info("seeded %s predefined queries", len(SEED_QUERIES))
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jobsearch-web
+  labels:
+    app.kubernetes.io/name: jobsearch-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jobsearch-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jobsearch-web
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: jobsearch-web
+      containers:
+        - name: web
+          image: jobsearch-web
+          ports:
+            - containerPort: 3000
+          env:
+            # The browser calls the API; overlay patches this to the real ingress URL.
+            - name: NEXT_PUBLIC_API_URL
+              value: "http://localhost:8000"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi

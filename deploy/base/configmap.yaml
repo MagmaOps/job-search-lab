@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jobsearch-config
+data:
+  # Non-secret configuration. Overlays in k3s-lab patch these as needed.
+  AI_PROVIDER: "anthropic"
+  AI_MODEL: "claude-haiku-5-5"
+  COLLECT_SCHEDULE: "0 */6 * * *"
+  LEADER_ELECTION: "true"
+  LOG_LEVEL: "INFO"
+  # CORS: the web origin. Overlay patches this to the real ingress host.
+  CORS_ORIGINS: "http://localhost:3000"

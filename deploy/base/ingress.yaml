@@ -1,0 +1,31 @@
+# Base Ingress with a placeholder host. k3s-lab overlays patch:
+#   - spec.rules[].host         → the real homelab hostname
+#   - ingressClassName / TLS    → via overlay (e.g. traefik, cert-manager)
+# Routing: "/api" → API service, everything else → web.
+# NOTE: this app has no auth — only expose it on the private network, never publicly.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jobsearch
+  annotations:
+    # Overlays may add class/TLS/strip-prefix annotations for the chosen controller.
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: jobsearch.REPLACE_ME.lan
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: jobsearch-api
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jobsearch-web
+                port:
+                  number: 3000

@@ -1,0 +1,47 @@
+# REFERENCE ONLY — this belongs in the k3s-lab repo, not in this app's Kustomize base.
+# It documents the CloudNativePG Cluster the app expects to consume.
+#
+# Prerequisite: install the CloudNativePG operator in the cluster first, e.g.
+#   kubectl apply --server-side -f \
+#     https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.0.yaml
+#
+# This Cluster gives you HA Postgres: a primary + replicas across nodes with automatic
+# failover. CNPG creates:
+#   - Service `jobsearch-db-rw`  → always the current primary (the app points here)
+#   - Service `jobsearch-db-ro`  → read-only replicas
+#   - Secret  `jobsearch-db-app` → with a ready-to-use `uri` key (used by the app)
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: jobsearch-db
+spec:
+  instances: 3                      # 1 primary + 2 replicas; survives a node loss
+  primaryUpdateStrategy: unsupervised
+
+  bootstrap:
+    initdb:
+      database: jobsearch
+      owner: jobsearch
+
+  storage:
+    size: 5Gi
+    # storageClassName: longhorn    # set to your homelab's replicated/default class
+
+  # Optional: scheduled backups to object storage (recommended for a homelab).
+  # backup:
+  #   barmanObjectStore:
+  #     destinationPath: s3://my-bucket/jobsearch
+  #     endpointURL: https://minio.lan
+  #     s3Credentials:
+  #       accessKeyId:     { name: backup-creds, key: ACCESS_KEY_ID }
+  #       secretAccessKey: { name: backup-creds, key: SECRET_ACCESS_KEY }
+---
+# The app also expects a Secret named `jobsearch-ai` holding the Anthropic key.
+# In k3s-lab, create it sealed (e.g. with sealed-secrets); shown here as a plain example.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jobsearch-ai
+type: Opaque
+stringData:
+  ANTHROPIC_API_KEY: "sk-ant-REPLACE_ME"

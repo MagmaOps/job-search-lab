@@ -1,0 +1,21 @@
+# Keep at least one pod of each stateless service available during voluntary disruptions
+# (node drains, upgrades). Combined with 2 replicas + anti-affinity for node-failure HA.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jobsearch-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jobsearch-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jobsearch-web
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jobsearch-web

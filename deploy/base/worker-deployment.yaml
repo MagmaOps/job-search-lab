@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jobsearch-worker
+  labels:
+    app.kubernetes.io/name: jobsearch-worker
+spec:
+  # Two replicas for failover; LEADER_ELECTION ensures only one collects at a time
+  # (Postgres advisory-lock leader election in the worker). If the leader's node dies,
+  # the standby acquires the lock and takes over automatically.
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jobsearch-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jobsearch-worker
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: jobsearch-worker
+      containers:
+        - name: worker
+          image: jobsearch-backend
+          args: ["worker"]
+          envFrom:
+            - configMapRef:
+                name: jobsearch-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jobsearch-db-app
+                  key: uri
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jobsearch-ai
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi

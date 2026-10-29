@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base manifests for the job-search app. Consumed and patched by the k3s-lab repo.
+# This base intentionally contains NO homelab-specific values:
+#   - image tags, replicas, resources, ingress host, storage class → patched in overlays
+#   - DB credentials → provided by the CloudNativePG-generated Secret (jobsearch-db-app)
+#   - Anthropic key → provided by a Secret sealed in k3s-lab (jobsearch-ai)
+
+resources:
+  - configmap.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - worker-deployment.yaml
+  - web-deployment.yaml
+  - web-service.yaml
+  - pdb.yaml
+  - ingress.yaml
+
+# Overlays override these with real registry/tag.
+images:
+  - name: jobsearch-backend
+    newName: ghcr.io/REPLACE_ME/jobsearch-backend
+    newTag: latest
+  - name: jobsearch-web
+    newName: ghcr.io/REPLACE_ME/jobsearch-web
+    newTag: latest
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: job-search-lab
+    includeSelectors: true

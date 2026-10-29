@@ -1,0 +1,53 @@
+# Local development only. Production runs on k3s via the k3s-lab repo (CNPG for Postgres).
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jobsearch
+      POSTGRES_PASSWORD: jobsearch
+      POSTGRES_DB: jobsearch
+    # No host port by default to avoid clashing with a local Postgres on 5432.
+    # Uncomment to inspect the DB from the host:
+    # ports:
+    #   - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobsearch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    command: ["api"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://jobsearch:jobsearch@db:5432/jobsearch
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    command: ["worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://jobsearch:jobsearch@db:5432/jobsearch
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./web
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

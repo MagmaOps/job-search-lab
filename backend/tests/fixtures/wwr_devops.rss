@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>We Work Remotely: DevOps and Sysadmin Jobs</title>
+    <item>
+      <title>Acme Corp: Senior DevOps Engineer</title>
+      <link>https://weworkremotely.com/remote-jobs/acme-corp-senior-devops-engineer</link>
+      <guid>https://weworkremotely.com/remote-jobs/acme-corp-senior-devops-engineer</guid>
+      <description>&lt;p&gt;We run &lt;strong&gt;Kubernetes&lt;/strong&gt; and Terraform on AWS.&lt;/p&gt;</description>
+      <region>Anywhere (100% Remote)</region>
+    </item>
+    <item>
+      <title>Globex: Platform / SRE</title>
+      <link>https://weworkremotely.com/remote-jobs/globex-platform-sre</link>
+      <guid>https://weworkremotely.com/remote-jobs/globex-platform-sre</guid>
+      <description>Operate CI/CD pipelines and observability stacks.</description>
+      <region>Europe only</region>
+    </item>
+  </channel>
+</rss>

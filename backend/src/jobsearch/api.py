@@ -1,0 +1,372 @@
+"""FastAPI application: all REST endpoints from docs/design.md section 7."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func, select, text
+from sqlalchemy.orm import Session
+
+from .config import get_settings
+from .db import get_db
+from .dedup import content_hash, fingerprint, normalize_url
+from .models import (
+    CV,
+    Analysis,
+    Job,
+    JobStatus,
+    MatchingProfile,
+    ProcessingStatus,
+    SearchQuery,
+)
+from .schemas import (
+    CVOut,
+    JobOut,
+    JobStatusUpdate,
+    ManualJobIn,
+    ProfileOut,
+    ProfileUpdate,
+    PromptOut,
+    PromptUpdate,
+    QueryIn,
+    QueryOut,
+    QueryUpdate,
+    StatusOut,
+)
+from .ai import prompts
+from .services import (
+    analysis_service,
+    collect_service,
+    cv_service,
+    prompt_service,
+)
+from .sources import source_names
+
+settings = get_settings()
+app = FastAPI(title="Job Search Lab", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── Health ────────────────────────────────────────────────────────────────
+@app.get("/healthz")
+def healthz() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz(db: Session = Depends(get_db)) -> dict:
+    db.execute(text("SELECT 1"))
+    return {"status": "ready"}
+
+
+# ── Jobs ──────────────────────────────────────────────────────────────────
+def _active_cv_id(db: Session) -> int | None:
+    cv = cv_service.get_active_cv(db)
+    return cv.id if cv else None
+
+
+@app.get("/jobs", response_model=list[JobOut])
+def list_jobs(
+    db: Session = Depends(get_db),
+    min_score: int | None = Query(None, ge=0, le=100),
+    location: str | None = None,
+    company: str | None = None,
+    language: str | None = None,
+    status: str | None = None,
+    sort: str = "score",
+) -> list[JobOut]:
+    cv_id = _active_cv_id(db)
+    q = db.query(Job, Analysis).outerjoin(
+        Analysis,
+        (Analysis.job_id == Job.id) & (Analysis.cv_id == cv_id),
+    )
+
+    # Job ids that have a completed analysis against some OTHER (older) CV — used to tell
+    # "outdated" (analyzed before, but not for the current CV) from "never analyzed".
+    outdated_ids: set[int] = set()
+    if cv_id is not None:
+        rows_other = db.execute(
+            select(Analysis.job_id)
+            .where(Analysis.cv_id != cv_id)
+            .where(Analysis.processing_status == ProcessingStatus.done)
+            .distinct()
+        ).all()
+        outdated_ids = {r[0] for r in rows_other}
+    if location:
+        q = q.filter(Job.location.ilike(f"%{location}%"))
+    if company:
+        q = q.filter(Job.company.ilike(f"%{company}%"))
+    if language:
+        q = q.filter(Job.language == language)
+    if status:
+        q = q.filter(Job.status == JobStatus(status))
+    if min_score is not None:
+        q = q.filter(Analysis.match_score >= min_score)
+
+    rows = q.all()
+
+    out: list[JobOut] = []
+    for job, analysis in rows:
+        if analysis and analysis.processing_status == ProcessingStatus.done:
+            state = "current"
+        elif analysis and analysis.processing_status == ProcessingStatus.error:
+            state = "error"
+        elif job.id in outdated_ids:
+            state = "outdated"
+        else:
+            state = "none"
+        out.append(
+            JobOut(
+                id=job.id,
+                source=job.source,
+                url=job.url,
+                title=job.title,
+                company=job.company,
+                location=job.location,
+                language=job.language,
+                status=job.status.value,
+                discovered_at=job.discovered_at,
+                analysis_state=state,
+                match_score=analysis.match_score if analysis else None,
+                translated_summary=analysis.translated_summary if analysis else None,
+                explanation=analysis.explanation if analysis else None,
+                matching_skills=analysis.matching_skills if analysis else None,
+                missing_requirements=analysis.missing_requirements if analysis else None,
+            )
+        )
+
+    reverse = True
+    if sort == "date":
+        out.sort(key=lambda j: j.discovered_at, reverse=True)
+    else:  # score, None last
+        out.sort(key=lambda j: (j.match_score is None, -(j.match_score or 0)))
+    return out
+
+
+@app.patch("/jobs/{job_id}", response_model=JobOut)
+def update_job_status(
+    job_id: int, body: JobStatusUpdate, db: Session = Depends(get_db)
+) -> JobOut:
+    job = db.get(Job, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    try:
+        job.status = JobStatus(body.status)
+    except ValueError:
+        raise HTTPException(422, f"Invalid status '{body.status}'")
+    db.commit()
+    db.refresh(job)
+    return JobOut(
+        id=job.id, source=job.source, url=job.url, title=job.title,
+        company=job.company, location=job.location, language=job.language,
+        status=job.status.value, discovered_at=job.discovered_at,
+    )
+
+
+@app.post("/jobs/manual", response_model=JobOut, status_code=201)
+def add_manual_job(body: ManualJobIn, db: Session = Depends(get_db)) -> JobOut:
+    """Paste a job URL (e.g. from LinkedIn) to store + analyze it."""
+    norm = normalize_url(body.url)
+    if norm and db.query(Job).filter(Job.normalized_url == norm).first():
+        raise HTTPException(409, "A job with this URL already exists.")
+    title = body.title or body.url
+    job = Job(
+        source="manual",
+        url=body.url,
+        normalized_url=norm,
+        fingerprint=fingerprint("manual", body.company, title, body.location),
+        title=title,
+        company=body.company,
+        location=body.location,
+        description=body.description,
+        content_hash=content_hash(title, body.description),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    analysis = analysis_service.analyze_single(db, job.id)
+    return JobOut(
+        id=job.id, source=job.source, url=job.url, title=job.title,
+        company=job.company, location=job.location, language=job.language,
+        status=job.status.value, discovered_at=job.discovered_at,
+        match_score=analysis.match_score if analysis else None,
+        translated_summary=analysis.translated_summary if analysis else None,
+        explanation=analysis.explanation if analysis else None,
+        matching_skills=analysis.matching_skills if analysis else None,
+        missing_requirements=analysis.missing_requirements if analysis else None,
+    )
+
+
+@app.post("/jobs/{job_id}/reanalyze")
+def reanalyze(job_id: int, db: Session = Depends(get_db)) -> dict:
+    ok = analysis_service.reanalyze_job(db, job_id)
+    if not ok:
+        raise HTTPException(400, "No active CV or job not found.")
+    return {"status": "reanalyzed", "job_id": job_id}
+
+
+@app.post("/analyze")
+def analyze(
+    limit: int = Query(50, ge=1, le=500), db: Session = Depends(get_db)
+) -> dict:
+    """Analyze already-stored jobs that have no completed analysis for the active CV.
+
+    This is the action to run after uploading a new CV: it scores the existing backlog
+    against the new CV without collecting anything. Cached (unchanged) analyses are skipped.
+    """
+    if cv_service.get_active_cv(db) is None:
+        raise HTTPException(400, "No active CV. Upload a CV first.")
+    processed = analysis_service.analyze_pending(db, limit=limit)
+    return {"analyzed": processed}
+
+
+# ── Queries ───────────────────────────────────────────────────────────────
+@app.get("/queries", response_model=list[QueryOut])
+def list_queries(db: Session = Depends(get_db)) -> list[SearchQuery]:
+    return db.query(SearchQuery).order_by(SearchQuery.id).all()
+
+
+@app.post("/queries", response_model=QueryOut, status_code=201)
+def create_query(body: QueryIn, db: Session = Depends(get_db)) -> SearchQuery:
+    q = SearchQuery(**body.model_dump())
+    db.add(q)
+    db.commit()
+    db.refresh(q)
+    return q
+
+
+@app.patch("/queries/{query_id}", response_model=QueryOut)
+def update_query(
+    query_id: int, body: QueryUpdate, db: Session = Depends(get_db)
+) -> SearchQuery:
+    q = db.get(SearchQuery, query_id)
+    if not q:
+        raise HTTPException(404, "Query not found")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(q, k, v)
+    db.commit()
+    db.refresh(q)
+    return q
+
+
+@app.delete("/queries/{query_id}", status_code=204)
+def delete_query(query_id: int, db: Session = Depends(get_db)) -> None:
+    q = db.get(SearchQuery, query_id)
+    if not q:
+        raise HTTPException(404, "Query not found")
+    db.delete(q)
+    db.commit()
+
+
+@app.post("/queries/{query_id}/run")
+def run_query_now(query_id: int, db: Session = Depends(get_db)) -> dict:
+    """Manual trigger. Runs full collection, then analysis."""
+    run = collect_service.run_collection(db, trigger="manual")
+    analyzed = analysis_service.analyze_pending(db)
+    return {
+        "jobs_found": run.jobs_found,
+        "jobs_new": run.jobs_new,
+        "analyzed": analyzed,
+        "errors": run.errors,
+    }
+
+
+@app.get("/sources")
+def list_sources() -> dict:
+    return {"sources": source_names()}
+
+
+# ── CV / profile ──────────────────────────────────────────────────────────
+@app.get("/cv", response_model=CVOut | None)
+def get_cv(db: Session = Depends(get_db)) -> CV | None:
+    return cv_service.get_active_cv(db)
+
+
+@app.post("/cv", response_model=CVOut, status_code=201)
+async def upload_cv(
+    file: UploadFile = File(...), db: Session = Depends(get_db)
+) -> CV:
+    data = await file.read()
+    try:
+        return cv_service.ingest_cv(db, file.filename or "cv", data)
+    except cv_service.UnsupportedFileError as exc:
+        raise HTTPException(415, str(exc))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.get("/profile", response_model=ProfileOut | None)
+def get_profile(db: Session = Depends(get_db)) -> MatchingProfile | None:
+    cv = cv_service.get_active_cv(db)
+    return cv.matching_profile if cv else None
+
+
+@app.patch("/profile", response_model=ProfileOut)
+def update_profile(body: ProfileUpdate, db: Session = Depends(get_db)) -> MatchingProfile:
+    cv = cv_service.get_active_cv(db)
+    if not cv or not cv.matching_profile:
+        raise HTTPException(404, "No active CV / matching profile.")
+    mp = cv.matching_profile
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(mp, k, v)
+    db.commit()
+    db.refresh(mp)
+    return mp
+
+
+# ── Prompts (editable AI templates) ─────────────────────────────────────────
+@app.get("/prompts", response_model=list[PromptOut])
+def list_prompts(db: Session = Depends(get_db)) -> list[dict]:
+    return prompt_service.list_prompts(db)
+
+
+@app.put("/prompts/{key}", response_model=PromptOut)
+def update_prompt(key: str, body: PromptUpdate, db: Session = Depends(get_db)) -> dict:
+    if key not in prompts.SPECS:
+        raise HTTPException(404, f"Unknown prompt '{key}'.")
+    try:
+        prompt_service.set_template(db, key, body.template)
+    except prompts.PromptValidationError as exc:
+        raise HTTPException(422, str(exc))
+    return next(p for p in prompt_service.list_prompts(db) if p["key"] == key)
+
+
+@app.post("/prompts/{key}/reset", response_model=PromptOut)
+def reset_prompt(key: str, db: Session = Depends(get_db)) -> dict:
+    if key not in prompts.SPECS:
+        raise HTTPException(404, f"Unknown prompt '{key}'.")
+    prompt_service.reset_template(db, key)
+    return next(p for p in prompt_service.list_prompts(db) if p["key"] == key)
+
+
+# ── Status ────────────────────────────────────────────────────────────────
+@app.get("/status", response_model=StatusOut)
+def status(db: Session = Depends(get_db)) -> StatusOut:
+    run = collect_service.last_run(db)
+    jobs_total = db.query(func.count(Job.id)).scalar() or 0
+    jobs_new = (
+        db.query(func.count(Job.id)).filter(Job.status == JobStatus.new).scalar() or 0
+    )
+    analyzed = (
+        db.query(func.count(Analysis.id))
+        .filter(Analysis.processing_status == ProcessingStatus.done)
+        .scalar()
+        or 0
+    )
+    return StatusOut(
+        last_run_at=run.started_at if run else None,
+        last_run_trigger=run.trigger if run else None,
+        jobs_total=jobs_total,
+        jobs_new=jobs_new,
+        jobs_analyzed=analyzed,
+        errors=(run.errors if run and run.errors else []),
+        ai_enabled=settings.ai_enabled,
+    )
