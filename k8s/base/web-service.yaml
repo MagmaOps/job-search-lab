@@ -1,0 +1,25 @@
+# Active service — the ingress routes "/" here. Rollouts flips its selector at promotion.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jobsearch-web
+spec:
+  selector:
+    app.kubernetes.io/name: jobsearch-web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+# Preview service — the new (green) web version during a blue-green rollout.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jobsearch-web-preview
+spec:
+  selector:
+    app.kubernetes.io/name: jobsearch-web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

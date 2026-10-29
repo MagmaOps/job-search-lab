@@ -17,15 +17,21 @@ spec:
       labels:
         app.kubernetes.io/name: jobsearch-worker
     spec:
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: jobsearch-worker
+      # Spread the two worker replicas across zones then nodes so the standby (which takes
+      # over leader election if the active worker's node/zone dies) is never co-located.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: jobsearch-worker
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: jobsearch-worker
       containers:
         - name: worker
           image: jobsearch-backend

@@ -17,14 +17,15 @@ resources:
   - pdb.yaml
   - ingress.yaml
 
-# Overlays override these with real registry/tag.
+# Images live on Docker Hub under magmakomer. The k3s-lab workload overlay pins the exact
+# version tag (e.g. v1.0.0); this base default is only used for a standalone `kustomize build`.
 images:
   - name: jobsearch-backend
-    newName: ghcr.io/REPLACE_ME/jobsearch-backend
-    newTag: latest
+    newName: magmakomer/jobsearch-backend
+    newTag: v1.0.0
   - name: jobsearch-web
-    newName: ghcr.io/REPLACE_ME/jobsearch-web
-    newTag: latest
+    newName: magmakomer/jobsearch-web
+    newTag: v1.0.0
 
 labels:
   - pairs:

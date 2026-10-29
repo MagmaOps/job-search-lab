@@ -1,0 +1,27 @@
+# Active service — the ingress and the web app talk to this. Argo Rollouts flips its
+# selector from blue to green at promotion time.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jobsearch-api
+spec:
+  selector:
+    app.kubernetes.io/name: jobsearch-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+# Preview service — points at the new (green) version during a blue-green rollout, so it
+# can be smoke-tested before the active service is switched over.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jobsearch-api-preview
+spec:
+  selector:
+    app.kubernetes.io/name: jobsearch-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
