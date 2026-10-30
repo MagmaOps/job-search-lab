@@ -4,6 +4,12 @@ metadata:
   name: jobsearch-worker
   labels:
     app.kubernetes.io/name: jobsearch-worker
+  annotations:
+    # A Deployment's spec.selector is immutable, so any selector change (e.g. toggling
+    # kustomize includeSelectors) can't be patched in place. Tell ArgoCD to replace the
+    # object instead of patching it. Safe here: the worker is stateless (leader election
+    # is via a Postgres advisory lock), so a brief recreate never interrupts collection.
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   # Two replicas for failover; LEADER_ELECTION ensures only one collects at a time
   # (Postgres advisory-lock leader election in the worker). If the leader's node dies,
