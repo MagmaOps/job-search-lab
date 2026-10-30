@@ -27,7 +27,11 @@ images:
     newName: magmakomer/jobsearch-web
     newTag: v1.0.0
 
+# Add the part-of label as metadata only. includeSelectors MUST stay false: Argo Rollouts
+# manages the blue-green Service selectors itself and validates them against the Rollout's
+# pod labels — injecting an extra label into the Service selector makes it reject the spec
+# with "Service ... has unmatch label ... in rollout" and no pods are created.
 labels:
   - pairs:
       app.kubernetes.io/part-of: job-search-lab
-    includeSelectors: true
+    includeSelectors: false
