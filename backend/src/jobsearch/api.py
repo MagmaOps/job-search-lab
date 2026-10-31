@@ -26,6 +26,7 @@ from .schemas import (
     ApplicationOut,
     ApplicationUpdate,
     CVOut,
+    InsightsOut,
     JobDetailOut,
     JobOut,
     JobPatch,
@@ -45,13 +46,14 @@ from .services import (
     application_service,
     collect_service,
     cv_service,
+    insights_service,
     prompt_service,
 )
 from .sources import source_names
 from .sources.base import normalize_work_type
 
 settings = get_settings()
-app = FastAPI(title="Job Search Lab", version="1.3.0")
+app = FastAPI(title="Job Search Lab", version="1.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -503,6 +505,39 @@ def reset_prompt(key: str, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(404, f"Unknown prompt '{key}'.")
     prompt_service.reset_template(db, key)
     return next(p for p in prompt_service.list_prompts(db) if p["key"] == key)
+
+
+# ── Insights (aggregated skill gaps) ────────────────────────────────────────
+def _insights_out(snapshot, active_cv_id: int | None) -> InsightsOut:
+    out = InsightsOut.model_validate(snapshot)
+    # Flag a snapshot computed against a CV that is no longer active.
+    out.stale_cv = snapshot.cv_id is not None and snapshot.cv_id != active_cv_id
+    return out
+
+
+@app.get("/insights", response_model=InsightsOut | None)
+def get_insights(db: Session = Depends(get_db)) -> InsightsOut | None:
+    """The current stored insights snapshot (null if none computed yet)."""
+    snapshot = insights_service.get_insights(db)
+    if snapshot is None:
+        return None
+    return _insights_out(snapshot, _active_cv_id(db))
+
+
+@app.post("/insights/refresh", response_model=InsightsOut)
+def refresh_insights(db: Session = Depends(get_db)) -> InsightsOut:
+    """Recompute the skill-gap aggregation over all analyzed jobs for the active CV and
+    overwrite the stored snapshot. Manual, user-initiated."""
+    snapshot = insights_service.refresh_insights(db)
+    if snapshot is None:
+        raise HTTPException(400, "No active CV. Upload a CV and analyze some jobs first.")
+    return _insights_out(snapshot, _active_cv_id(db))
+
+
+@app.delete("/insights", status_code=204)
+def clear_insights(db: Session = Depends(get_db)) -> None:
+    """Delete the stored insights snapshot. Nothing else ever deletes it."""
+    insights_service.clear_insights(db)
 
 
 # ── Status ────────────────────────────────────────────────────────────────

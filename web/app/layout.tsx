@@ -15,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <span className="brand">Job Search Lab</span>
           <nav>
             <Link href="/">Dashboard</Link>
+            <Link href="/insights">Insights</Link>
             <Link href="/cv">CV &amp; Profile</Link>
             <Link href="/queries">Queries</Link>
             <Link href="/prompts">Prompts</Link>

@@ -239,6 +239,28 @@ class PromptTemplate(Base):
     )
 
 
+class Insights(Base):
+    """A persisted snapshot of aggregated skill gaps across all analyzed jobs.
+
+    Computed on demand (manual Refresh), stored until the user refreshes or clears it —
+    never auto-deleted, not even on a CV change. `cv_id` records which CV it was computed
+    against so the UI can flag a snapshot taken against a now-replaced CV. A single current
+    snapshot is kept (refresh overwrites the one row).
+    """
+
+    __tablename__ = "insights"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cv_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv.id", ondelete="SET NULL"), index=True
+    )
+    # How many done analyses fed this snapshot.
+    jobs_analyzed: Mapped[int] = mapped_column(Integer, default=0)
+    # Ranked gaps: [{skill, count, severity: "basic"|"average"|null, why}], most-asked first.
+    items: Mapped[list | None] = mapped_column(JSONB, default=list)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class CollectionRun(Base):
     """Record of each collection run for the dashboard's 'last search time + errors'."""
 

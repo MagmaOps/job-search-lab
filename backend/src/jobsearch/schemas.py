@@ -174,6 +174,18 @@ class ProfileUpdate(BaseModel):
     notes: str | None = None
 
 
+# ── Insights ────────────────────────────────────────────────────────────────
+class InsightsOut(ORMModel):
+    cv_id: int | None
+    jobs_analyzed: int
+    # Ranked gaps: [{skill, count, severity: basic|average|null, why}]
+    items: list | None
+    computed_at: datetime
+    # True when the snapshot was computed against a CV that is no longer active — the UI
+    # shows a "Refresh to update" hint. Set by the router, not stored.
+    stale_cv: bool = False
+
+
 # ── Status ────────────────────────────────────────────────────────────────
 class StatusOut(BaseModel):
     last_run_at: datetime | None

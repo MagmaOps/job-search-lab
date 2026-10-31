@@ -111,6 +111,21 @@ export interface Prompt {
   updated_at: string | null;
 }
 
+export interface InsightItem {
+  skill: string;
+  count: number;
+  severity: "basic" | "average" | null;
+  why: string;
+}
+
+export interface Insights {
+  cv_id: number | null;
+  jobs_analyzed: number;
+  items: InsightItem[] | null;
+  computed_at: string;
+  stale_cv: boolean;
+}
+
 export interface CV {
   id: number;
   source_filename: string | null;
@@ -177,6 +192,10 @@ export const api = {
   updatePrompt: (key: string, template: string) =>
     req<Prompt>(`/prompts/${key}`, { method: "PUT", body: JSON.stringify({ template }) }),
   resetPrompt: (key: string) => req<Prompt>(`/prompts/${key}/reset`, { method: "POST" }),
+
+  insights: () => req<Insights | null>(`/insights`),
+  refreshInsights: () => req<Insights>(`/insights/refresh`, { method: "POST" }),
+  clearInsights: () => req(`/insights`, { method: "DELETE" }),
 
   cv: () => req<CV | null>(`/cv`),
   profile: () => req<Profile | null>(`/profile`),
