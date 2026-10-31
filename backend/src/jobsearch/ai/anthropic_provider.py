@@ -10,7 +10,7 @@ import json
 
 from ..config import Settings
 from . import prompts
-from .base import DimensionScore, MatchResult, ProfileExtraction
+from .base import ApplicationDraft, DimensionScore, MatchResult, ProfileExtraction
 
 
 class AnthropicProvider:
@@ -102,6 +102,99 @@ class AnthropicProvider:
             eligibility_note=data.get("eligibility_note") or None,
             model=self.model,
         )
+
+    def generate_application(
+        self,
+        *,
+        job_title: str,
+        job_description: str,
+        cv_text: str,
+        effective_profile: dict,
+        draft_template: str | None = None,
+        review_template: str | None = None,
+        revise_template: str | None = None,
+    ) -> ApplicationDraft:
+        profile_json = json.dumps(effective_profile, ensure_ascii=False)
+        cv = cv_text[:12000]
+        description = (job_description or "")[:12000]
+
+        # Pass 1 — draft. Long Markdown output: budget generously to avoid JSON truncation.
+        draft_tmpl = draft_template or prompts.DEFAULT_APPLICATION_PROMPT
+        draft = self._complete_json(
+            prompts.render(
+                prompts.APPLICATION,
+                draft_tmpl,
+                profile=profile_json,
+                cv=cv,
+                title=job_title,
+                description=description,
+            ),
+            max_tokens=4000,
+        )
+        cover_letter = str(draft.get("cover_letter_md", "")).strip()
+        cv_summary = str(draft.get("cv_summary_md", "")).strip()
+
+        # Pass 2 — reviewer critique (grounding audit + quality suggestions).
+        review_tmpl = review_template or prompts.DEFAULT_APPLICATION_REVIEW_PROMPT
+        review = self._complete_json(
+            prompts.render(
+                prompts.APPLICATION_REVIEW,
+                review_tmpl,
+                profile=profile_json,
+                cv=cv,
+                title=job_title,
+                cover_letter=cover_letter,
+                cv_summary=cv_summary,
+            ),
+            max_tokens=2000,
+        )
+        grounding = [str(x) for x in (review.get("grounding_issues") or [])]
+        suggestions = [str(x) for x in (review.get("suggestions") or [])]
+        reviewer_notes = _format_review_notes(grounding, suggestions)
+
+        # Pass 3 — revise once, applying the critique while keeping the never-invent rule.
+        if grounding or suggestions:
+            revise_tmpl = revise_template or prompts.DEFAULT_APPLICATION_REVISE_PROMPT
+            revised = self._complete_json(
+                prompts.render(
+                    prompts.APPLICATION_REVISE,
+                    revise_tmpl,
+                    profile=profile_json,
+                    cv=cv,
+                    title=job_title,
+                    description=description,
+                    cover_letter=cover_letter,
+                    cv_summary=cv_summary,
+                    critique=reviewer_notes,
+                ),
+                max_tokens=4000,
+            )
+            cover_letter = str(revised.get("cover_letter_md", "")).strip() or cover_letter
+            cv_summary = str(revised.get("cv_summary_md", "")).strip() or cv_summary
+
+        return ApplicationDraft(
+            cover_letter_md=cover_letter,
+            cv_summary_md=cv_summary,
+            reviewer_notes=reviewer_notes,
+            model=self.model,
+        )
+
+
+def _format_review_notes(grounding: list[str], suggestions: list[str]) -> str:
+    """Render the reviewer's JSON critique into readable Markdown for storage/UI."""
+    parts: list[str] = []
+    if grounding:
+        parts.append(
+            "**Grounding issues**\n"
+            + "\n".join(f"- {g}" for g in grounding)
+        )
+    if suggestions:
+        parts.append(
+            "**Suggestions**\n" + "\n".join(f"- {s}" for s in suggestions)
+        )
+    if not parts:
+        return "Reviewer found no grounding issues and no further suggestions."
+    return "\n\n".join(parts)
 
 
 def _norm_eligibility(value: object) -> str | None:

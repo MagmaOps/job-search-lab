@@ -180,6 +180,43 @@ class Analysis(Base):
     job: Mapped[Job] = relationship(back_populates="analyses")
 
 
+class Application(Base):
+    """A tailored application (cover letter + CV summary) for a job against a CV version.
+
+    Cached by (job_id, cv_id) exactly like Analysis: a CV change invalidates old
+    applications, and regeneration resets the row to `pending` for the worker to redo.
+    """
+
+    __tablename__ = "application"
+    __table_args__ = (UniqueConstraint("job_id", "cv_id", name="uq_application_job_cv"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("job.id", ondelete="CASCADE"), index=True)
+    cv_id: Mapped[int] = mapped_column(ForeignKey("cv.id", ondelete="CASCADE"), index=True)
+
+    processing_status: Mapped[ProcessingStatus] = mapped_column(
+        Enum(ProcessingStatus, name="processing_status"),
+        default=ProcessingStatus.pending,
+        index=True,
+    )
+    error_message: Mapped[str | None] = mapped_column(Text)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Tailored, user-editable application content (Markdown). cover_letter_md +
+    # cv_summary_md are the sendable output; reviewer_notes records the drafter→reviewer
+    # critique for transparency.
+    cover_letter_md: Mapped[str | None] = mapped_column(Text)
+    cv_summary_md: Mapped[str | None] = mapped_column(Text)
+    reviewer_notes: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+    job: Mapped[Job] = relationship()
+
+
 class PromptTemplate(Base):
     """An editable prompt sent to the AI provider, stored and overridable via the UI."""
 

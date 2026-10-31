@@ -115,6 +115,27 @@ class ProfileOut(ORMModel):
     notes: str | None
 
 
+# ── Applications ────────────────────────────────────────────────────────────
+class ApplicationOut(ORMModel):
+    job_id: int
+    cv_id: int
+    # pending | done | error — drives the dashboard spinner, same as analysis.
+    processing_status: str
+    error_message: str | None = None
+    cover_letter_md: str | None = None
+    cv_summary_md: str | None = None
+    reviewer_notes: str | None = None
+    model: str | None = None
+    updated_at: datetime | None = None
+
+
+class ApplicationUpdate(BaseModel):
+    """User edits to the generated application. Only present fields are changed."""
+
+    cover_letter_md: str | None = None
+    cv_summary_md: str | None = None
+
+
 class PromptOut(BaseModel):
     key: str
     label: str

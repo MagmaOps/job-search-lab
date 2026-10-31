@@ -143,6 +143,16 @@ analysis
   match_score, explanation, matching_skills (jsonb), missing_requirements (jsonb),
   model, created_at
   UNIQUE (job_id, cv_id)  -- re-analyze when CV changes = new row
+
+application                -- tailored CV + cover letter per job (see §5a)
+  id, job_id, cv_id,       -- same (job, cv) caching key as analysis
+  processing_status,       -- pending | done | error
+  error_message, retry_count,
+  cover_letter_md,         -- tailored cover letter (Markdown), user-editable
+  cv_summary_md,           -- tailored profile statement + reframed bullets (Markdown)
+  reviewer_notes,          -- the drafter→reviewer critique, for transparency
+  model, created_at, updated_at
+  UNIQUE (job_id, cv_id)   -- one current application per job per CV version
 ```
 
 ### Deduplication (task requirement 5)
@@ -182,12 +192,47 @@ analysis
 - Store original + translated summary; dashboard shows both.
 - All results persisted to avoid repeat calls.
 
+## 5a. Application generation (the apply half of the funnel)
+Finding and scoring jobs only pays off if you then apply well. This stage turns a scored
+job into a **sendable application**: a tailored cover letter + CV summary, grounded strictly
+in the active CV and matching profile.
+
+- **Contract**: `AIProvider.generate_application(...)` returns an `ApplicationDraft`
+  (`cover_letter_md`, `cv_summary_md`, `reviewer_notes`, `model`). Both providers implement
+  it; the `StubProvider` is deterministic and offline (assembles from profile facts,
+  invents nothing) so the pipeline and tests run without a key.
+- **Two-pass drafter → reviewer**: the Anthropic provider drafts, runs a reviewer critique
+  (a mandatory factual-grounding audit + missed-keyword/framing/tone feedback), then revises
+  once. The critique is persisted as `reviewer_notes`. The stub produces a grounding-focused
+  note deterministically.
+- **Editable prompts**: three new prompts — `application` (drafter), `application_review`
+  (reviewer), and `application_revise` (applies the critique) — live in `ai/prompts.py`
+  `SPECS`, overridable and validated on the `/prompts` page exactly like `profile`/`analyze`.
+  Every prompt the flow sends to the model is user-editable; none are hardcoded.
+- **Writing-style discipline** (adapted from `ai-job-search`'s methodology): the drafter and
+  reviewer prompts enforce no em-dashes / no clichés / no apologetic hedging, first-person
+  active voice, forward-looking cover-letter framing (tasks you'll solve, not a CV recap),
+  measurable results, honest in-progress qualifications, and the "interview-backtrack test"
+  (reframe emphasis, never substance). PDF/LaTeX layout, ATS text-layer checks, and company
+  web research from that repo are deliberately out of scope for this stage (see the handover
+  §1a table).
+- **Same pipeline shape as analysis**: queued (`pending`) per `(job_id, cv_id)`, drained by
+  the worker, advisory-locked, posting text sanitized via `posting_guard` first. A CV change
+  invalidates old applications; "Regenerate" resets the row to `pending`. Generation is
+  opt-in per job (the user clicks **Generate application**), never run over the whole backlog.
+- **Never invent** (design §... the non-negotiable rule): every claim traces to the CV +
+  effective profile. A missing requirement is stated as an honest gap, never fabricated —
+  enforced in both prompts, the revision step, and the stub.
+- **Markdown first**: output is Markdown (`cover_letter_md` + `cv_summary_md`), editable in
+  the dashboard. LaTeX/PDF compilation is a deliberately deferred, separate stage.
+
 ## 6. Web dashboard (requirement 7)
 Pages:
 - **Dashboard** — jobs ranked by `match_score`. Columns: title, company, location,
   language, score, summary, discovered_at, original link. Filters: score, location,
   company, language, status. Status actions: saved / dismissed / applied / interview.
-  Header shows last search time + recent errors.
+  Header shows last search time + recent errors. The expanded row also generates a
+  tailored application (cover letter + CV summary) for the job — edit, save, regenerate.
 - **CV** — upload/replace (PDF/DOCX), shows active CV extraction status + derived profile,
   and lets the user edit the matching profile (must-haves / dealbreakers / etc.).
 - **Queries** — list/add/edit/enable/disable/delete; includes the predefined DevOps query.
@@ -198,6 +243,9 @@ GET    /jobs?min_score&location&company&language&status&sort
 PATCH  /jobs/{id}        (status)
 POST   /jobs/manual      (paste a URL → fetch metadata → queue analysis)
 POST   /jobs/{id}/reanalyze
+GET    /jobs/{id}/application    (current tailored application for the active CV)
+POST   /jobs/{id}/application    (queue/regenerate; worker drafts → reviews → revises)
+PATCH  /jobs/{id}/application    (save user edits to the cover letter / CV summary)
 GET    /queries   POST /queries   PATCH /queries/{id}   DELETE /queries/{id}
 POST   /queries/{id}/run   (manual trigger)
 GET    /cv        POST /cv (upload → extract → discard file)

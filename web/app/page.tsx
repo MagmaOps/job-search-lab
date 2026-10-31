@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
-import { api, Job, Status } from "@/lib/api";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { api, Application, Job, Status } from "@/lib/api";
 
 function scoreClass(s: number | null): string {
   if (s === null || s === undefined) return "na";
@@ -75,6 +75,143 @@ function SalaryEditor({
         </button>
       )}
     </span>
+  );
+}
+
+function ApplicationPanel({ jobId }: { jobId: number }) {
+  const [app, setApp] = useState<Application | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // Local editable copies so the user can tweak the draft before sending it out.
+  const [cover, setCover] = useState("");
+  const [summary, setSummary] = useState("");
+  const [saved, setSaved] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const syncLocal = useCallback((a: Application | null) => {
+    setApp(a);
+    setCover(a?.cover_letter_md ?? "");
+    setSummary(a?.cv_summary_md ?? "");
+  }, []);
+
+  const load = useCallback(async () => {
+    try {
+      const a = await api.getApplication(jobId);
+      syncLocal(a);
+    } catch (e) {
+      setErr(String(e));
+    }
+  }, [jobId, syncLocal]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Poll while the worker is generating, so the draft appears on its own.
+  const pending = app?.processing_status === "pending";
+  useEffect(() => {
+    if (!pending) {
+      if (pollRef.current) clearInterval(pollRef.current);
+      return;
+    }
+    pollRef.current = setInterval(load, 3000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [pending, load]);
+
+  async function generate() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const a = await api.generateApplication(jobId);
+      syncLocal(a); // flips to pending; polling clears it as the worker finishes
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const a = await api.updateApplication(jobId, {
+        cover_letter_md: cover,
+        cv_summary_md: summary,
+      });
+      syncLocal(a);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (app === undefined) return <p className="muted">Loading application…</p>;
+
+  const dirty =
+    app?.processing_status === "done" &&
+    (cover !== (app.cover_letter_md ?? "") || summary !== (app.cv_summary_md ?? ""));
+
+  return (
+    <div className="application">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <strong>Application</strong>
+        <button className="secondary" onClick={generate} disabled={busy || pending}>
+          {pending ? "Generating…" : app ? "Regenerate" : "Generate application"}
+        </button>
+      </div>
+      {err && <div className="error detail">{err}</div>}
+      {!app && !pending && (
+        <p className="muted">
+          No application yet. Generate a tailored cover letter and CV summary for this job.
+        </p>
+      )}
+      {pending && (
+        <p className="analyzing">
+          <span className="spinner" />
+          <span className="muted">The worker is drafting and reviewing — you can leave this page.</span>
+        </p>
+      )}
+      {app?.processing_status === "error" && (
+        <div className="error detail">Generation failed: {app.error_message}</div>
+      )}
+      {app?.processing_status === "done" && (
+        <>
+          <label>Cover letter (Markdown)</label>
+          <textarea
+            value={cover}
+            onChange={(e) => setCover(e.target.value)}
+            rows={14}
+            style={{ width: "100%", fontFamily: "monospace", fontSize: 13 }}
+          />
+          <label>CV summary (Markdown)</label>
+          <textarea
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            rows={10}
+            style={{ width: "100%", fontFamily: "monospace", fontSize: 13 }}
+          />
+          {app.reviewer_notes && (
+            <details className="reviewer-notes">
+              <summary>Reviewer notes</summary>
+              <pre style={{ whiteSpace: "pre-wrap" }}>{app.reviewer_notes}</pre>
+            </details>
+          )}
+          <div className="row" style={{ marginTop: 8 }}>
+            <button onClick={save} disabled={!dirty || busy}>
+              {busy ? "Saving…" : "Save edits"}
+            </button>
+            {saved && <span className="muted">Saved.</span>}
+            {app.model && <span className="muted" style={{ marginLeft: "auto" }}>model: {app.model}</span>}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -365,6 +502,8 @@ export default function Dashboard() {
                               disabled={j.analysis_state === "pending"}>
                         {j.analysis_state === "pending" ? "Analyzing…" : "Re-analyze"}
                       </button>
+                      <hr style={{ margin: "14px 0", border: "none", borderTop: "1px solid #e5e7eb" }} />
+                      <ApplicationPanel jobId={j.id} />
                     </td>
                   </tr>
                 )}

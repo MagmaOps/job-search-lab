@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from .base import DimensionScore, MatchResult, ProfileExtraction
+from .base import ApplicationDraft, DimensionScore, MatchResult, ProfileExtraction
 
 try:  # langdetect is optional at runtime; degrade gracefully
     from langdetect import detect as _detect_lang
@@ -200,5 +200,111 @@ class StubProvider:
             posting_country=country,
             eligibility=eligibility,
             eligibility_note=elig_note,
+            model=self.model,
+        )
+
+    def generate_application(
+        self,
+        *,
+        job_title: str,
+        job_description: str,
+        cv_text: str,
+        effective_profile: dict,
+        draft_template: str | None = None,
+        review_template: str | None = None,
+        revise_template: str | None = None,
+    ) -> ApplicationDraft:
+        """Assemble a plausible application from facts the profile/CV actually contain.
+
+        Deterministic and offline: invents nothing. Matched skills are only those literally
+        present in BOTH the profile/CV and the posting; must-haves absent from the posting
+        are stated as honest gaps. Mirrors the never-invent rule of the real prompt so the
+        offline pipeline behaves the same and tests stay token-free.
+        """
+        job_toks = _tokens(f"{job_title}\n{job_description}")
+
+        must = [s for s in effective_profile.get("must_have_skills", []) if s]
+        nice = [s for s in effective_profile.get("nice_to_have_skills", []) if s]
+        derived = [s for s in effective_profile.get("skills", []) if s]
+        seniority = effective_profile.get("min_seniority") or effective_profile.get(
+            "seniority"
+        )
+
+        # Skills the candidate actually has (from the profile) that the posting asks for.
+        candidate_skills = {s.lower(): s for s in (must + nice + derived)}
+        matched = [orig for low, orig in candidate_skills.items() if low in job_toks]
+        matched = sorted(set(matched), key=str.lower)
+        # Must-haves the candidate's profile does not evidence → honest gaps.
+        have = {s.lower() for s in (nice + derived)}
+        gaps = sorted({s for s in must if s.lower() not in have}, key=str.lower)
+
+        title = (job_title or "this role").strip()
+        sen_phrase = f"{seniority} " if seniority else ""
+        matched_phrase = ", ".join(matched) if matched else "my core technical skills"
+
+        # ── Cover letter — only asserts skills drawn from the profile ──
+        intro = (
+            f"I am writing to apply for the {title} position. As a {sen_phrase}engineer, "
+            f"my experience maps directly onto what this role requires."
+        )
+        skills_tail = (
+            "These are not keywords on a page for me but tools I have used in real "
+            "delivery, which is what I would bring to your team."
+            if matched
+            else "I would bring these to your team from day one."
+        )
+        skills_line = (
+            f"The posting's priorities align with skills I work with directly: "
+            f"{matched_phrase}. {skills_tail}"
+        )
+        letter_lines = ["Dear Hiring Team,", "", intro, "", skills_line]
+        if gaps:
+            gap_bridges = "; ".join(
+                f"{g} is not yet part of my daily toolkit, though it is a natural "
+                f"extension of my existing work"
+                for g in gaps
+            )
+            gap_line = (
+                f"To be transparent about fit: {gap_bridges}. "
+                "I would rather name that honestly than overstate it."
+            )
+            letter_lines += ["", gap_line]
+        letter_lines += [
+            "",
+            "I would welcome the chance to discuss how my background fits your needs.",
+            "",
+            "Kind regards",
+        ]
+        cover_letter_md = "\n".join(letter_lines)
+
+        # ── CV summary — profile statement + competencies grounded in the profile ──
+        competency_source = matched or nice or derived
+        competencies = "\n".join(
+            f"- **{s}** — applied in prior DevOps work." for s in competency_source[:7]
+        ) or "- (No skills recorded in the profile yet.)"
+        profile_line = (
+            f"**Profile.** {sen_phrase.capitalize() or ''}Engineer targeting {title}, "
+            f"with hands-on experience across {matched_phrase}."
+        )
+        summary_lines = [profile_line, "", "**Key competencies**", competencies]
+        cv_summary_md = "\n".join(summary_lines)
+
+        # ── Reviewer notes — deterministic grounding-focused critique ──
+        note_parts = ["Grounding audit (stub): all claims drawn from the recorded profile."]
+        if gaps:
+            note_parts.append(
+                "Honest gaps surfaced rather than fabricated: " + ", ".join(gaps) + "."
+            )
+        if not matched:
+            note_parts.append(
+                "No posting skill overlapped the profile — consider whether this role fits."
+            )
+        note_parts.append("Configure an Anthropic key for a real drafter→reviewer pass.")
+        reviewer_notes = " ".join(note_parts)
+
+        return ApplicationDraft(
+            cover_letter_md=cover_letter_md,
+            cv_summary_md=cv_summary_md,
+            reviewer_notes=reviewer_notes,
             model=self.model,
         )

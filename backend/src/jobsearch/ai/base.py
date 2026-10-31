@@ -63,6 +63,20 @@ class MatchResult:
     model: str = "stub"
 
 
+@dataclass
+class ApplicationDraft:
+    """A tailored application for one job: a cover letter + reframed CV summary.
+
+    Markdown-only first cut (no LaTeX/PDF). Grounded strictly in the CV + matching profile;
+    `reviewer_notes` records the drafter→reviewer critique for transparency.
+    """
+
+    cover_letter_md: str
+    cv_summary_md: str
+    reviewer_notes: str = ""
+    model: str = "stub"
+
+
 class AIProvider(Protocol):
     """Pluggable AI backend. Must never invent qualifications (design requirement 6)."""
 
@@ -89,4 +103,23 @@ class AIProvider(Protocol):
         template: str | None = None,
     ) -> MatchResult:
         """Detect language, translate if useful, and score the job against the profile."""
+        ...
+
+    def generate_application(
+        self,
+        *,
+        job_title: str,
+        job_description: str,
+        cv_text: str,
+        effective_profile: dict,
+        draft_template: str | None = None,
+        review_template: str | None = None,
+        revise_template: str | None = None,
+    ) -> ApplicationDraft:
+        """Draft a tailored cover letter + CV summary, then critique and revise once.
+
+        Grounded strictly in `cv_text` + `effective_profile`; never invents qualifications.
+        A missing requirement is stated as an honest gap, never assumed met. Returns the
+        revised draft plus the reviewer's critique.
+        """
         ...

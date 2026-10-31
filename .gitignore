@@ -28,3 +28,6 @@ Thumbs.db
 # Local data
 data/
 pgdata/
+
+# Third-party reference clone (read-only, never a dependency of our app)
+ai-job-search/

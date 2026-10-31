@@ -34,6 +34,18 @@ export interface Job {
   eligibility_note: string | null;
 }
 
+export interface Application {
+  job_id: number;
+  cv_id: number;
+  processing_status: "pending" | "done" | "error";
+  error_message: string | null;
+  cover_letter_md: string | null;
+  cv_summary_md: string | null;
+  reviewer_notes: string | null;
+  model: string | null;
+  updated_at: string | null;
+}
+
 export interface Query {
   id: number;
   name: string;
@@ -117,6 +129,17 @@ export const api = {
   reanalyze: (id: number) => req(`/jobs/${id}/reanalyze`, { method: "POST" }),
   addManual: (body: Record<string, unknown>) =>
     req<Job>(`/jobs/manual`, { method: "POST", body: JSON.stringify(body) }),
+
+  // Application generation (tailored cover letter + CV summary per job).
+  getApplication: (jobId: number) =>
+    req<Application | null>(`/jobs/${jobId}/application`),
+  generateApplication: (jobId: number) =>
+    req<Application>(`/jobs/${jobId}/application`, { method: "POST" }),
+  updateApplication: (jobId: number, body: Partial<Pick<Application, "cover_letter_md" | "cv_summary_md">>) =>
+    req<Application>(`/jobs/${jobId}/application`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 
   analyze: () => req<{ queued: number }>(`/analyze`, { method: "POST" }),
 

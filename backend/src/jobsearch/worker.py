@@ -18,7 +18,7 @@ from sqlalchemy import text
 
 from .config import get_settings
 from .db import SessionLocal, engine
-from .services import analysis_service, collect_service
+from .services import analysis_service, application_service, collect_service
 
 logging.basicConfig(level=get_settings().log_level)
 log = logging.getLogger("jobsearch.worker")
@@ -56,6 +56,11 @@ def _drain_analysis_queue() -> None:
         processed = analysis_service.analyze_pending(db, limit=25)
         if processed:
             log.info("analysis queue: processed=%s", processed)
+        # Same tick drains the application-generation queue so a 'Generate application'
+        # click resolves within seconds. Generation is heavier per job, so a smaller batch.
+        generated = application_service.generate_pending(db, limit=5)
+        if generated:
+            log.info("application queue: generated=%s", generated)
     except Exception:
         log.exception("analysis queue tick failed")
     finally:

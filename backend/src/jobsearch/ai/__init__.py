@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..config import Settings, get_settings
-from .base import AIProvider, MatchResult
+from .base import AIProvider, ApplicationDraft, MatchResult
 from .stub import StubProvider
 
 
@@ -18,4 +18,10 @@ def get_provider(settings: Settings | None = None) -> AIProvider:
     return StubProvider()
 
 
-__all__ = ["AIProvider", "MatchResult", "StubProvider", "get_provider"]
+__all__ = [
+    "AIProvider",
+    "ApplicationDraft",
+    "MatchResult",
+    "StubProvider",
+    "get_provider",
+]

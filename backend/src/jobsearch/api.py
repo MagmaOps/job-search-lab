@@ -15,6 +15,7 @@ from .dedup import content_hash, fingerprint, normalize_url
 from .models import (
     CV,
     Analysis,
+    Application,
     Job,
     JobStatus,
     MatchingProfile,
@@ -22,6 +23,8 @@ from .models import (
     SearchQuery,
 )
 from .schemas import (
+    ApplicationOut,
+    ApplicationUpdate,
     CVOut,
     JobOut,
     JobPatch,
@@ -38,6 +41,7 @@ from .schemas import (
 from .ai import prompts
 from .services import (
     analysis_service,
+    application_service,
     collect_service,
     cv_service,
     prompt_service,
@@ -46,7 +50,7 @@ from .sources import source_names
 from .sources.base import normalize_work_type
 
 settings = get_settings()
-app = FastAPI(title="Job Search Lab", version="0.1.0")
+app = FastAPI(title="Job Search Lab", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -247,6 +251,60 @@ def reanalyze(job_id: int, db: Session = Depends(get_db)) -> dict:
     if not ok:
         raise HTTPException(400, "No active CV or job not found.")
     return {"status": "queued", "job_id": job_id}
+
+
+# ── Applications (tailored cover letter + CV summary) ───────────────────────
+def _application_out(app_row: Application) -> ApplicationOut:
+    return ApplicationOut(
+        job_id=app_row.job_id,
+        cv_id=app_row.cv_id,
+        processing_status=app_row.processing_status.value,
+        error_message=app_row.error_message,
+        cover_letter_md=app_row.cover_letter_md,
+        cv_summary_md=app_row.cv_summary_md,
+        reviewer_notes=app_row.reviewer_notes,
+        model=app_row.model,
+        updated_at=app_row.updated_at,
+    )
+
+
+@app.get("/jobs/{job_id}/application", response_model=ApplicationOut | None)
+def get_application(job_id: int, db: Session = Depends(get_db)) -> ApplicationOut | None:
+    """Current application for this job against the active CV (null if none generated)."""
+    app_row = application_service.get_application(db, job_id)
+    return _application_out(app_row) if app_row else None
+
+
+@app.post("/jobs/{job_id}/application", response_model=ApplicationOut)
+def generate_application(job_id: int, db: Session = Depends(get_db)) -> ApplicationOut:
+    """Queue (or regenerate) a tailored application for this job against the active CV.
+
+    Returns immediately with the row in `pending`; the worker drains it. Poll this endpoint
+    to see it flip pending → done, so the work survives the browser tab closing.
+    """
+    ok = application_service.enqueue_application(db, job_id)
+    if not ok:
+        raise HTTPException(400, "No active CV or job not found.")
+    app_row = application_service.get_application(db, job_id)
+    return _application_out(app_row)
+
+
+@app.patch("/jobs/{job_id}/application", response_model=ApplicationOut)
+def update_application(
+    job_id: int, body: ApplicationUpdate, db: Session = Depends(get_db)
+) -> ApplicationOut:
+    """Save the user's edits to a generated application (cover letter / CV summary)."""
+    app_row = application_service.get_application(db, job_id)
+    if app_row is None:
+        raise HTTPException(404, "No application for this job and the active CV.")
+    fields = body.model_dump(exclude_unset=True)
+    if "cover_letter_md" in fields:
+        app_row.cover_letter_md = fields["cover_letter_md"]
+    if "cv_summary_md" in fields:
+        app_row.cv_summary_md = fields["cv_summary_md"]
+    db.commit()
+    db.refresh(app_row)
+    return _application_out(app_row)
 
 
 @app.post("/analyze")

@@ -34,10 +34,17 @@ don't add product features or abstractions beyond what a task needs.
   Production is Postgres via CloudNativePG.
 
 ## AI layer contract
-- Two editable prompts live in `ai/prompts.py`: `PROFILE` and `ANALYZE`. They are
-  user-overridable via the API/UI and validated against a strict placeholder allowlist.
+- Five editable prompts live in `ai/prompts.py`: `PROFILE`, `ANALYZE`, `APPLICATION`,
+  `APPLICATION_REVIEW`, and `APPLICATION_REVISE`. They are user-overridable via the API/UI
+  and validated against a strict placeholder allowlist. **Every prompt sent to the model is
+  editable on the `/prompts` page — do not hardcode a prompt in a provider.**
   - `profile` allows only `{cv}`.
   - `analyze` allows only `{profile}`, `{cv}`, `{title}`, `{description}`.
+  - `application` allows only `{profile}`, `{cv}`, `{title}`, `{description}`.
+  - `application_review` allows only `{profile}`, `{cv}`, `{title}`, `{cover_letter}`,
+    `{cv_summary}`.
+  - `application_revise` allows only `{profile}`, `{cv}`, `{title}`, `{description}`,
+    `{critique}`, `{cover_letter}`, `{cv_summary}`.
   - Literal braces in a prompt (e.g. JSON examples) MUST be escaped as `{{` / `}}` or the
     validator rejects them as unknown placeholders.
 - Two providers behind `ai/base.py`'s `AIProvider` protocol: `StubProvider` (offline, no
@@ -47,6 +54,13 @@ don't add product features or abstractions beyond what a task needs.
 - `analyze` output is persisted per `(job_id, cv_id)` in the `analysis` table and includes
   a per-dimension `dimension_scores` breakdown (technical / experience / seniority /
   career alignment, with weights 0.30/0.25/0.15/0.30 and a one-line reason each).
+- `generate_application` (AI contract in `ai/base.py`, returns `ApplicationDraft`) produces
+  a tailored cover letter + CV summary. It mirrors the analysis pipeline exactly:
+  `application_service.py` queues `pending` per `(job_id, cv_id)`, the worker's drain tick
+  generates, and results persist in the `application` table (Markdown, user-editable, with
+  the reviewer critique in `reviewer_notes`). Generation is opt-in per job, never run over
+  the whole backlog. The Anthropic provider does a drafter→reviewer→revise sequence; the
+  stub assembles a grounded draft offline. See `design.md` §5a.
 - Untrusted job text passes through `ai/posting_guard.py` (strips hidden/invisible content,
   flags instruction-shaped lines) **before** it reaches the model. Always sanitize posting
   text before sending it to a provider.
