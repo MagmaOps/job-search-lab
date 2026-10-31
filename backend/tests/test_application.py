@@ -422,3 +422,48 @@ def test_jobs_list_exposes_learning_gaps_field(api_ctx):
     analysis_service.analyze_pending(session)
     row = next(j for j in client.get("/jobs").json() if j["id"] == job.id)
     assert "learning_gaps" in row
+
+
+# ── Robust JSON parsing (Anthropic provider) ────────────────────────────────
+def test_escape_control_chars_salvages_raw_newlines_in_strings():
+    """The reported failure: model returns Markdown with RAW newlines inside a JSON string,
+    which is illegal JSON. The salvage step escapes them so json.loads succeeds."""
+    import json as _json
+
+    from jobsearch.ai.anthropic_provider import _escape_control_chars_in_strings
+
+    # A cover letter with real newlines inside the string value (invalid JSON as-is).
+    broken = '{"cover_letter_md": "Dear Team,\n\nI apply for the role.\n- kubernetes",' \
+             ' "cv_summary_md": "Profile.\nSkills."}'
+    # Sanity: it really is invalid before repair.
+    try:
+        _json.loads(broken)
+        raise AssertionError("expected the raw-newline JSON to be invalid")
+    except _json.JSONDecodeError:
+        pass
+
+    fixed = _json.loads(_escape_control_chars_in_strings(broken))
+    assert "Dear Team," in fixed["cover_letter_md"]
+    assert "\n" in fixed["cover_letter_md"]  # newline preserved, now properly escaped
+    assert fixed["cv_summary_md"].startswith("Profile.")
+
+
+def test_escape_control_chars_leaves_valid_json_untouched():
+    import json as _json
+
+    from jobsearch.ai.anthropic_provider import _escape_control_chars_in_strings
+
+    # Already-valid JSON (escaped \n, structural newlines between tokens) must round-trip.
+    good = '{\n  "a": "line1\\nline2",\n  "b": "plain"\n}'
+    assert _json.loads(_escape_control_chars_in_strings(good)) == _json.loads(good)
+
+
+def test_escape_control_chars_respects_escaped_quotes():
+    import json as _json
+
+    from jobsearch.ai.anthropic_provider import _escape_control_chars_in_strings
+
+    # A quote escaped inside the string must not be treated as the string's end.
+    broken = '{"x": "he said \\"hi\\"\nthen left"}'
+    fixed = _json.loads(_escape_control_chars_in_strings(broken))
+    assert fixed["x"] == 'he said "hi"\nthen left'

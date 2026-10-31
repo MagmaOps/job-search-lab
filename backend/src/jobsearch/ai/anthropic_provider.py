@@ -41,9 +41,17 @@ class AnthropicProvider:
             text = text[text.find("{") : text.rfind("}") + 1]
         try:
             return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # Most common failure for the application prompts: the model puts multi-line
+        # Markdown into a JSON string with RAW newlines (illegal in JSON → "Unterminated
+        # string"). Escape stray control characters inside strings and retry before giving
+        # up — this salvages an otherwise-complete response without another API call.
+        try:
+            return json.loads(_escape_control_chars_in_strings(text))
         except json.JSONDecodeError as exc:
-            # A truncated response (hit max_tokens mid-string) or non-JSON output. Surface a
-            # clear, actionable message instead of the raw "Unterminated string" parse error.
+            # Still unparseable: either genuinely truncated (hit max_tokens mid-string) or
+            # not JSON at all. Surface a clear, actionable message.
             stop = getattr(msg, "stop_reason", None)
             hint = (
                 " (model output was truncated — raise max_tokens)"
@@ -125,7 +133,8 @@ class AnthropicProvider:
         cv = cv_text[:12000]
         description = (job_description or "")[:12000]
 
-        # Pass 1 — draft. Long Markdown output: budget generously to avoid JSON truncation.
+        # Pass 1 — draft. Two long Markdown documents (cover letter + CV summary) in one
+        # JSON response — budget generously so the combined output never truncates.
         draft_tmpl = draft_template or prompts.DEFAULT_APPLICATION_PROMPT
         draft = self._complete_json(
             prompts.render(
@@ -136,12 +145,13 @@ class AnthropicProvider:
                 title=job_title,
                 description=description,
             ),
-            max_tokens=4000,
+            max_tokens=8000,
         )
         cover_letter = str(draft.get("cover_letter_md", "")).strip()
         cv_summary = str(draft.get("cv_summary_md", "")).strip()
 
-        # Pass 2 — reviewer critique (grounding audit + quality suggestions).
+        # Pass 2 — reviewer critique (grounding audit + quality suggestions). The critique
+        # can run to several lines per category, so give it room too.
         review_tmpl = review_template or prompts.DEFAULT_APPLICATION_REVIEW_PROMPT
         review = self._complete_json(
             prompts.render(
@@ -153,7 +163,7 @@ class AnthropicProvider:
                 cover_letter=cover_letter,
                 cv_summary=cv_summary,
             ),
-            max_tokens=2000,
+            max_tokens=4000,
         )
         grounding = [str(x) for x in (review.get("grounding_issues") or [])]
         suggestions = [str(x) for x in (review.get("suggestions") or [])]
@@ -174,7 +184,7 @@ class AnthropicProvider:
                     cv_summary=cv_summary,
                     critique=reviewer_notes,
                 ),
-                max_tokens=4000,
+                max_tokens=8000,
             )
             cover_letter = str(revised.get("cover_letter_md", "")).strip() or cover_letter
             cv_summary = str(revised.get("cv_summary_md", "")).strip() or cv_summary
@@ -185,6 +195,44 @@ class AnthropicProvider:
             reviewer_notes=reviewer_notes,
             model=self.model,
         )
+
+
+def _escape_control_chars_in_strings(text: str) -> str:
+    """Escape raw control characters that appear *inside* JSON string literals.
+
+    Models asked to return Markdown inside a JSON string often emit real newlines/tabs,
+    which are illegal in JSON and raise "Unterminated string". This walks the text,
+    tracking string context and backslash escapes, and rewrites a raw newline/return/tab
+    inside a string to its escaped form. Characters outside strings (the JSON structure)
+    are left untouched, so whitespace between tokens is preserved.
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                out.append(ch)
+                escaped = False
+            elif ch == "\\":
+                out.append(ch)
+                escaped = True
+            elif ch == '"':
+                out.append(ch)
+                in_string = False
+            elif ch == "\n":
+                out.append("\\n")
+            elif ch == "\r":
+                out.append("\\r")
+            elif ch == "\t":
+                out.append("\\t")
+            else:
+                out.append(ch)
+        else:
+            out.append(ch)
+            if ch == '"':
+                in_string = True
+    return "".join(out)
 
 
 def _format_review_notes(grounding: list[str], suggestions: list[str]) -> str:

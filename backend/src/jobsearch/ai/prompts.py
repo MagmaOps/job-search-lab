@@ -241,8 +241,8 @@ not support as an ungrounded claim that must be removed or softened. The candida
 profile are the ONLY source of truth; a claim is grounded only if the CV or profile
 supports it.
 
-THEN critique for quality. Address EVERY category below, even if your finding is "no issues"
-— silence on a category reads as skipping it:
+THEN critique for quality across these categories. List ONLY real issues — skip a category
+that is fine rather than writing filler. Each point is ONE short line, not a paragraph:
 - Missed keywords / requirements: posting priorities the draft fails to address (and which
   real CV evidence could address them). Prefer the posting's own term where it truthfully
   applies.
@@ -257,11 +257,12 @@ THEN critique for quality. Address EVERY category below, even if your finding is
   papered over with an invented claim. Never suggest adding a skill or experience the CV
   does not evidence — suggest framing adjacent real experience instead.
 
-OUTPUT — return ONLY JSON with exactly these keys:
-{{"grounding_issues": ["<one line per ungrounded or unsupported claim; empty array if the
-drafts are fully grounded>"], "suggestions": ["<one line per concrete, grounded improvement,
-ordered most-important first>"]}}
-Do not wrap the JSON in prose.
+OUTPUT — return ONLY JSON with exactly these keys. Be concise: AT MOST 5 grounding_issues
+and AT MOST 6 suggestions, each a single short line (roughly 20 words or fewer), ordered
+most-important first:
+{{"grounding_issues": ["<one short line per ungrounded claim; empty array if fully
+grounded>"], "suggestions": ["<one short line per concrete, grounded improvement>"]}}
+Do not wrap the JSON in prose. Escape any literal newlines inside the strings as \\n.
 
 Matching profile (JSON):
 {profile}
