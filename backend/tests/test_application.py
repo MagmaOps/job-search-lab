@@ -467,3 +467,65 @@ def test_escape_control_chars_respects_escaped_quotes():
     broken = '{"x": "he said \\"hi\\"\nthen left"}'
     fixed = _json.loads(_escape_control_chars_in_strings(broken))
     assert fixed["x"] == 'he said "hi"\nthen left'
+
+
+# ── Full tailored CV (cv_full_md) ───────────────────────────────────────────
+def test_stub_generates_grounded_full_cv():
+    draft = StubProvider().generate_application(
+        job_title="DevOps Engineer",
+        job_description="kubernetes terraform aws prometheus",
+        cv_text="Senior DevOps engineer.",
+        effective_profile={
+            "skills": ["kubernetes", "terraform", "aws", "prometheus"],
+            "must_have_skills": ["kubernetes"],
+            "nice_to_have_skills": ["terraform"],
+            "min_seniority": "senior",
+            "languages": [{"language": "English", "level": "fluent"}],
+        },
+    )
+    md = draft.cv_full_md
+    # Structured, PDF-ready Markdown with the expected sections.
+    assert md.startswith("# ")
+    assert "## Profile" in md and "## Skills" in md
+    assert "## Languages" in md and "English" in md
+    # Grounded: only profile skills appear; nothing invented.
+    assert "kubernetes" in md.lower() and "terraform" in md.lower()
+
+
+def test_stub_full_cv_never_invents_experience():
+    draft = StubProvider().generate_application(
+        job_title="Platform Engineer",
+        job_description="golang rust",  # skills NOT in the profile
+        cv_text="kubernetes only",
+        effective_profile={"skills": ["kubernetes"], "must_have_skills": [],
+                           "nice_to_have_skills": []},
+    )
+    md = draft.cv_full_md.lower()
+    assert "golang" not in md and "rust" not in md
+
+
+def test_full_cv_persisted_and_served_and_editable(api_ctx):
+    client, session = api_ctx
+    _seed_cv(session, ["kubernetes", "terraform"])
+    job = _seed_job(session)
+    client.post(f"/jobs/{job.id}/application")
+    assert application_service.generate_pending(session) == 1
+
+    got = client.get(f"/jobs/{job.id}/application").json()
+    assert got["cv_full_md"] and got["cv_full_md"].startswith("# ")
+
+    # Edits to the full CV round-trip.
+    r = client.patch(
+        f"/jobs/{job.id}/application",
+        json={"cv_full_md": "# My edited CV\n\n## Profile\nEdited."},
+    )
+    assert r.status_code == 200
+    assert r.json()["cv_full_md"] == "# My edited CV\n\n## Profile\nEdited."
+
+
+def test_application_prompts_accept_cv_full_placeholder():
+    # review + revise prompts now take {cv_full}; defaults must still validate.
+    prompts.validate(prompts.APPLICATION_REVIEW, prompts.DEFAULT_APPLICATION_REVIEW_PROMPT)
+    prompts.validate(prompts.APPLICATION_REVISE, prompts.DEFAULT_APPLICATION_REVISE_PROMPT)
+    assert "cv_full" in prompts.SPECS[prompts.APPLICATION_REVIEW].required_placeholders
+    assert "cv_full" in prompts.SPECS[prompts.APPLICATION_REVISE].required_placeholders

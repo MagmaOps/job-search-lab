@@ -94,6 +94,7 @@ function ApplicationPanel({ jobId }: { jobId: number }) {
   // Local editable copies so the user can tweak the draft before sending it out.
   const [cover, setCover] = useState("");
   const [summary, setSummary] = useState("");
+  const [full, setFull] = useState("");
   const [saved, setSaved] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -101,6 +102,7 @@ function ApplicationPanel({ jobId }: { jobId: number }) {
     setApp(a);
     setCover(a?.cover_letter_md ?? "");
     setSummary(a?.cv_summary_md ?? "");
+    setFull(a?.cv_full_md ?? "");
   }, []);
 
   const load = useCallback(async () => {
@@ -149,6 +151,7 @@ function ApplicationPanel({ jobId }: { jobId: number }) {
       const a = await api.updateApplication(jobId, {
         cover_letter_md: cover,
         cv_summary_md: summary,
+        cv_full_md: full,
       });
       syncLocal(a);
       setSaved(true);
@@ -164,7 +167,9 @@ function ApplicationPanel({ jobId }: { jobId: number }) {
 
   const dirty =
     app?.processing_status === "done" &&
-    (cover !== (app.cover_letter_md ?? "") || summary !== (app.cv_summary_md ?? ""));
+    (cover !== (app.cover_letter_md ?? "") ||
+      summary !== (app.cv_summary_md ?? "") ||
+      full !== (app.cv_full_md ?? ""));
 
   return (
     <div className="application">
@@ -203,6 +208,13 @@ function ApplicationPanel({ jobId }: { jobId: number }) {
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
             rows={10}
+            style={{ width: "100%", fontFamily: "monospace", fontSize: 13 }}
+          />
+          <label>Full tailored CV (Markdown — ready to render to PDF)</label>
+          <textarea
+            value={full}
+            onChange={(e) => setFull(e.target.value)}
+            rows={20}
             style={{ width: "100%", fontFamily: "monospace", fontSize: 13 }}
           />
           {app.reviewer_notes && (

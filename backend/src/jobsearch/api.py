@@ -51,7 +51,7 @@ from .sources import source_names
 from .sources.base import normalize_work_type
 
 settings = get_settings()
-app = FastAPI(title="Job Search Lab", version="1.2.1")
+app = FastAPI(title="Job Search Lab", version="1.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -314,6 +314,7 @@ def _application_out(app_row: Application) -> ApplicationOut:
         error_message=app_row.error_message,
         cover_letter_md=app_row.cover_letter_md,
         cv_summary_md=app_row.cv_summary_md,
+        cv_full_md=app_row.cv_full_md,
         reviewer_notes=app_row.reviewer_notes,
         model=app_row.model,
         updated_at=app_row.updated_at,
@@ -345,7 +346,7 @@ def generate_application(job_id: int, db: Session = Depends(get_db)) -> Applicat
 def update_application(
     job_id: int, body: ApplicationUpdate, db: Session = Depends(get_db)
 ) -> ApplicationOut:
-    """Save the user's edits to a generated application (cover letter / CV summary)."""
+    """Save the user's edits to a generated application (cover letter / CV summary / CV)."""
     app_row = application_service.get_application(db, job_id)
     if app_row is None:
         raise HTTPException(404, "No application for this job and the active CV.")
@@ -354,6 +355,8 @@ def update_application(
         app_row.cover_letter_md = fields["cover_letter_md"]
     if "cv_summary_md" in fields:
         app_row.cv_summary_md = fields["cv_summary_md"]
+    if "cv_full_md" in fields:
+        app_row.cv_full_md = fields["cv_full_md"]
     db.commit()
     db.refresh(app_row)
     return _application_out(app_row)

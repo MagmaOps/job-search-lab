@@ -215,6 +215,8 @@ class Application(Base):
     # critique for transparency.
     cover_letter_md: Mapped[str | None] = mapped_column(Text)
     cv_summary_md: Mapped[str | None] = mapped_column(Text)
+    # A complete tailored CV (all sections) in Markdown, ready to render to PDF.
+    cv_full_md: Mapped[str | None] = mapped_column(Text)
     reviewer_notes: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

@@ -308,9 +308,50 @@ class StubProvider:
         note_parts.append("Configure an Anthropic key for a real drafter→reviewer pass.")
         reviewer_notes = " ".join(note_parts)
 
+        # ── Full CV — a complete, PDF-ready Markdown doc from grounded facts only ──
+        # Offline the stub cannot parse structured roles/education from free CV text, so it
+        # assembles the sections it CAN ground (profile, skills, languages) and never
+        # fabricates experience/education entries. The real provider produces the full set.
+        languages = [
+            lang.get("language")
+            for lang in (effective_profile.get("languages") or [])
+            if isinstance(lang, dict) and lang.get("language")
+        ]
+        all_skills = sorted(set(matched + nice + derived), key=str.lower)
+        cv_profile_line = (
+            f"{sen_phrase.capitalize() or ''}Engineer targeting {title}, "
+            f"with hands-on experience across {matched_phrase}."
+        )
+        experience_note = (
+            "_Offline stub: experience and education are taken verbatim from your uploaded "
+            "CV by the real AI provider. Configure an Anthropic key to generate the full "
+            "tailored CV; nothing here is invented._"
+        )
+        cv_full_lines = [
+            "# Candidate CV",
+            "",
+            f"_Tailored for: {title}_",
+            "",
+            "## Profile",
+            "",
+            cv_profile_line,
+            "",
+            "## Skills",
+            "",
+        ]
+        cv_full_lines += (
+            [f"- {s}" for s in all_skills] or ["- (No skills recorded in the profile yet.)"]
+        )
+        if languages:
+            cv_full_lines += ["", "## Languages", ""]
+            cv_full_lines += [f"- {lang}" for lang in languages]
+        cv_full_lines += ["", "## Experience", "", experience_note]
+        cv_full_md = "\n".join(cv_full_lines)
+
         return ApplicationDraft(
             cover_letter_md=cover_letter_md,
             cv_summary_md=cv_summary_md,
+            cv_full_md=cv_full_md,
             reviewer_notes=reviewer_notes,
             model=self.model,
         )

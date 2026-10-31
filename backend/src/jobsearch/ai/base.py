@@ -85,14 +85,17 @@ class MatchResult:
 
 @dataclass
 class ApplicationDraft:
-    """A tailored application for one job: a cover letter + reframed CV summary.
+    """A tailored application for one job: a full CV, a short CV summary, and a cover letter.
 
-    Markdown-only first cut (no LaTeX/PDF). Grounded strictly in the CV + matching profile;
-    `reviewer_notes` records the drafter→reviewer critique for transparency.
+    All Markdown (no LaTeX/PDF — the user renders to PDF themselves). Grounded strictly in
+    the CV + matching profile; `reviewer_notes` records the drafter→reviewer critique.
     """
 
     cover_letter_md: str
     cv_summary_md: str
+    # A complete tailored CV (all sections: profile, skills, experience, education, …),
+    # structured with clean Markdown headings/bullets so it converts to PDF cleanly.
+    cv_full_md: str = ""
     reviewer_notes: str = ""
     model: str = "stub"
 

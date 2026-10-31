@@ -95,6 +95,7 @@ _COLUMN_TOPUPS = (
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS dimension_scores JSONB',
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS learning_gaps JSONB',
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS stale BOOLEAN DEFAULT FALSE',
+    'ALTER TABLE application ADD COLUMN IF NOT EXISTS cv_full_md TEXT',
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS posting_country VARCHAR(64)',
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS eligibility VARCHAR(16)',
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS eligibility_note TEXT',

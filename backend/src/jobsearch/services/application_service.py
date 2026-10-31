@@ -166,6 +166,7 @@ def _generate_locked(db: Session, cv, limit: int) -> int:
             application.error_message = None
             application.cover_letter_md = draft.cover_letter_md
             application.cv_summary_md = draft.cv_summary_md
+            application.cv_full_md = draft.cv_full_md
             application.reviewer_notes = draft.reviewer_notes
             application.model = draft.model
             processed += 1

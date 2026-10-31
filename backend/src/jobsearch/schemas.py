@@ -138,6 +138,7 @@ class ApplicationOut(ORMModel):
     error_message: str | None = None
     cover_letter_md: str | None = None
     cv_summary_md: str | None = None
+    cv_full_md: str | None = None
     reviewer_notes: str | None = None
     model: str | None = None
     updated_at: datetime | None = None
@@ -148,6 +149,7 @@ class ApplicationUpdate(BaseModel):
 
     cover_letter_md: str | None = None
     cv_summary_md: str | None = None
+    cv_full_md: str | None = None
 
 
 class PromptOut(BaseModel):

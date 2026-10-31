@@ -153,6 +153,7 @@ application                -- tailored CV + cover letter per job (see §5a)
   error_message, retry_count,
   cover_letter_md,         -- tailored cover letter (Markdown), user-editable
   cv_summary_md,           -- tailored profile statement + reframed bullets (Markdown)
+  cv_full_md,              -- complete tailored CV, all sections (Markdown, PDF-ready)
   reviewer_notes,          -- the drafter→reviewer critique, for transparency
   model, created_at, updated_at
   UNIQUE (job_id, cv_id)   -- one current application per job per CV version
@@ -226,8 +227,12 @@ in the active CV and matching profile.
 - **Never invent** (design §... the non-negotiable rule): every claim traces to the CV +
   effective profile. A missing requirement is stated as an honest gap, never fabricated —
   enforced in both prompts, the revision step, and the stub.
-- **Markdown first**: output is Markdown (`cover_letter_md` + `cv_summary_md`), editable in
-  the dashboard. LaTeX/PDF compilation is a deliberately deferred, separate stage.
+- **Markdown first**: output is Markdown — `cover_letter_md`, `cv_summary_md`, and
+  `cv_full_md` (a complete tailored CV: name/contact header, Profile, grouped Skills,
+  full Experience with real roles/dates/metrics, Education, Languages, etc.) — all editable
+  in the dashboard. The full CV is structured as clean headings + bullets (no tables/HTML)
+  so the user can render it to a small PDF themselves. Server-side PDF/LaTeX compilation is
+  deliberately NOT built — rendering Markdown to PDF is left to the user.
 
 ## 6. Web dashboard (requirement 7)
 Pages:

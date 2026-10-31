@@ -55,7 +55,9 @@ don't add product features or abstractions beyond what a task needs.
   a per-dimension `dimension_scores` breakdown (technical / experience / seniority /
   career alignment, with weights 0.30/0.25/0.15/0.30 and a one-line reason each).
 - `generate_application` (AI contract in `ai/base.py`, returns `ApplicationDraft`) produces
-  a tailored cover letter + CV summary. It mirrors the analysis pipeline exactly:
+  a tailored cover letter, a short CV summary, AND a complete tailored CV (`cv_full_md`,
+  all sections, grounded, PDF-ready Markdown — the user renders the PDF themselves; no
+  server-side PDF/LaTeX by design). It mirrors the analysis pipeline exactly:
   `application_service.py` queues `pending` per `(job_id, cv_id)`, the worker's drain tick
   generates, and results persist in the `application` table (Markdown, user-editable, with
   the reviewer critique in `reviewer_notes`). Generation is opt-in per job, never run over

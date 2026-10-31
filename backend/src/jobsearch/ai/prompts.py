@@ -214,9 +214,26 @@ CV SUMMARY (cv_summary_md, Markdown):
 - If the CV shows an in-progress qualification, state it as in progress with its expected
   date — never imply a credential already held.
 
+FULL CV (cv_full_md, Markdown):
+A COMPLETE, submittable CV tailored to this posting — not a summary. Reorganize and reword
+the candidate's REAL CV content to foreground what this role wants; include every section
+the source CV supports. Structure it as clean, PDF-ready Markdown:
+- A top `#` heading with the candidate's name, then a contact line IF the CV states one
+  (email/phone/location/links) — never invent contact details.
+- `## Profile` — the tailored elevator-pitch statement.
+- `## Skills` — grouped, posting-relevant first, using the candidate's real skills only.
+- `## Experience` — each role as `### Title — Company (dates)` from the CV verbatim for the
+  facts, with reframed bullets emphasizing what this posting values; most recent first,
+  4-6 bullets for the latest role, fewer for older ones.
+- `## Education` — degrees/institutions/dates from the CV; mark in-progress ones as such.
+- Include any other sections the CV genuinely has (certifications, languages, publications)
+  and OMIT sections the CV does not support — never fabricate one to look complete.
+Keep headings/bullets consistent and simple (no tables, no HTML) so it converts to a small
+PDF cleanly. Every date, employer, title, and metric MUST match the source CV exactly.
+
 OUTPUT — return ONLY JSON with exactly these keys:
 {{"cover_letter_md": "<the cover letter in Markdown>", "cv_summary_md": "<the tailored CV
-summary in Markdown>"}}
+summary in Markdown>", "cv_full_md": "<the complete tailored CV in Markdown>"}}
 Do not wrap the JSON in prose. Escape any literal newlines inside the strings as \\n.
 
 Matching profile (JSON):
@@ -235,11 +252,12 @@ application (cover letter + CV summary) BEFORE it is sent. You critique the draf
 not rewrite it. Your single most important job is a factual-grounding audit.
 
 FACTUAL GROUNDING AUDIT (first and mandatory):
-Compare every concrete claim in both drafts — each skill, tool, employer, title, date, and
-metric — against the candidate CV and matching profile below. Flag anything the sources do
-not support as an ungrounded claim that must be removed or softened. The candidate's CV and
-profile are the ONLY source of truth; a claim is grounded only if the CV or profile
-supports it.
+Compare every concrete claim in ALL THREE drafts (cover letter, CV summary, full CV) — each
+skill, tool, employer, title, date, and metric — against the candidate CV and matching
+profile below. Flag anything the sources do not support as an ungrounded claim that must be
+removed or softened. The candidate's CV and profile are the ONLY source of truth; a claim
+is grounded only if the CV or profile supports it. Pay special attention to the full CV: a
+fabricated date, employer, or metric there is the most damaging.
 
 THEN critique for quality across these categories. List ONLY real issues — skip a category
 that is fine rather than writing filler. Each point is ONE short line, not a paragraph:
@@ -276,11 +294,15 @@ Draft cover letter:
 
 Draft CV summary:
 {cv_summary}
+
+Draft full CV:
+{cv_full}
 """
 
 
 DEFAULT_APPLICATION_REVISE_PROMPT = """You previously drafted a job application. A reviewer
-critiqued it below. Revise the cover letter and CV summary to address the critique.
+critiqued it below. Revise the cover letter, the CV summary, AND the full CV to address the
+critique.
 
 HARD RULE — never invent: apply only grounded improvements. Every claim must still trace to
 the CV or matching profile. If the critique asks for a skill or experience the CV does not
@@ -293,8 +315,8 @@ letter to about one page (~250-300 words of body text).
 
 OUTPUT — return ONLY JSON with exactly these keys:
 {{"cover_letter_md": "<revised cover letter in Markdown>", "cv_summary_md": "<revised CV
-summary in Markdown>"}}
-Do not wrap the JSON in prose.
+summary in Markdown>", "cv_full_md": "<revised full CV in Markdown>"}}
+Do not wrap the JSON in prose. Escape any literal newlines inside the strings as \\n.
 
 Matching profile (JSON):
 {profile}
@@ -314,6 +336,9 @@ Current cover letter:
 
 Current CV summary:
 {cv_summary}
+
+Current full CV:
+{cv_full}
 """
 
 
@@ -347,10 +372,11 @@ SPECS: dict[str, PromptSpec] = {
         key=APPLICATION,
         label="Application draft (cover letter + CV summary)",
         description=(
-            "Drafts a tailored cover letter and CV summary for one job, grounded strictly "
-            "in the CV + matching profile (never invents qualifications; honest gaps). "
-            "Must return JSON with cover_letter_md, cv_summary_md. Available placeholders: "
-            "{profile}, {cv}, {title}, {description}."
+            "Drafts a tailored cover letter, a short CV summary, and a complete tailored "
+            "CV for one job, grounded strictly in the CV + matching profile (never invents "
+            "qualifications; honest gaps). Must return JSON with cover_letter_md, "
+            "cv_summary_md, cv_full_md. Available placeholders: {profile}, {cv}, {title}, "
+            "{description}."
         ),
         required_placeholders=frozenset({"profile", "cv", "title", "description"}),
         default=DEFAULT_APPLICATION_PROMPT,
@@ -363,10 +389,10 @@ SPECS: dict[str, PromptSpec] = {
             "missed-keyword, framing, and tone feedback — never suggests fabricating "
             "skills or experience. Must return JSON with grounding_issues, suggestions. "
             "Available placeholders: {profile}, {cv}, {title}, {cover_letter}, "
-            "{cv_summary}."
+            "{cv_summary}, {cv_full}."
         ),
         required_placeholders=frozenset(
-            {"profile", "cv", "title", "cover_letter", "cv_summary"}
+            {"profile", "cv", "title", "cover_letter", "cv_summary", "cv_full"}
         ),
         default=DEFAULT_APPLICATION_REVIEW_PROMPT,
     ),
@@ -376,9 +402,9 @@ SPECS: dict[str, PromptSpec] = {
         description=(
             "Revises the draft to apply the reviewer's critique while keeping the "
             "never-invent rule — removes ungrounded claims, never adds unevidenced ones. "
-            "Must return JSON with cover_letter_md, cv_summary_md. Available placeholders: "
-            "{profile}, {cv}, {title}, {description}, {critique}, {cover_letter}, "
-            "{cv_summary}."
+            "Must return JSON with cover_letter_md, cv_summary_md, cv_full_md. Available "
+            "placeholders: {profile}, {cv}, {title}, {description}, {critique}, "
+            "{cover_letter}, {cv_summary}, {cv_full}."
         ),
         required_placeholders=frozenset(
             {
@@ -389,6 +415,7 @@ SPECS: dict[str, PromptSpec] = {
                 "critique",
                 "cover_letter",
                 "cv_summary",
+                "cv_full",
             }
         ),
         default=DEFAULT_APPLICATION_REVISE_PROMPT,

@@ -149,6 +149,7 @@ class AnthropicProvider:
         )
         cover_letter = str(draft.get("cover_letter_md", "")).strip()
         cv_summary = str(draft.get("cv_summary_md", "")).strip()
+        cv_full = str(draft.get("cv_full_md", "")).strip()
 
         # Pass 2 — reviewer critique (grounding audit + quality suggestions). The critique
         # can run to several lines per category, so give it room too.
@@ -162,6 +163,7 @@ class AnthropicProvider:
                 title=job_title,
                 cover_letter=cover_letter,
                 cv_summary=cv_summary,
+                cv_full=cv_full,
             ),
             max_tokens=4000,
         )
@@ -182,16 +184,19 @@ class AnthropicProvider:
                     description=description,
                     cover_letter=cover_letter,
                     cv_summary=cv_summary,
+                    cv_full=cv_full,
                     critique=reviewer_notes,
                 ),
                 max_tokens=8000,
             )
             cover_letter = str(revised.get("cover_letter_md", "")).strip() or cover_letter
             cv_summary = str(revised.get("cv_summary_md", "")).strip() or cv_summary
+            cv_full = str(revised.get("cv_full_md", "")).strip() or cv_full
 
         return ApplicationDraft(
             cover_letter_md=cover_letter,
             cv_summary_md=cv_summary,
+            cv_full_md=cv_full,
             reviewer_notes=reviewer_notes,
             model=self.model,
         )

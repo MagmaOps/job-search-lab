@@ -56,6 +56,7 @@ export interface Application {
   error_message: string | null;
   cover_letter_md: string | null;
   cv_summary_md: string | null;
+  cv_full_md: string | null;
   reviewer_notes: string | null;
   model: string | null;
   updated_at: string | null;
@@ -153,7 +154,7 @@ export const api = {
     req<Application | null>(`/jobs/${jobId}/application`),
   generateApplication: (jobId: number) =>
     req<Application>(`/jobs/${jobId}/application`, { method: "POST" }),
-  updateApplication: (jobId: number, body: Partial<Pick<Application, "cover_letter_md" | "cv_summary_md">>) =>
+  updateApplication: (jobId: number, body: Partial<Pick<Application, "cover_letter_md" | "cv_summary_md" | "cv_full_md">>) =>
     req<Application>(`/jobs/${jobId}/application`, {
       method: "PATCH",
       body: JSON.stringify(body),
