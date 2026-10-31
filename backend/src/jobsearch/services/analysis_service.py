@@ -127,6 +127,7 @@ def _analyze_locked(db: Session, cv, limit: int) -> int:
             )
             analysis.processing_status = ProcessingStatus.done
             analysis.error_message = None
+            analysis.stale = False
             analysis.detected_language = result.detected_language
             analysis.translated_summary = result.translated_summary
             analysis.match_score = result.match_score
@@ -134,6 +135,7 @@ def _analyze_locked(db: Session, cv, limit: int) -> int:
             analysis.matching_skills = result.matching_skills
             analysis.missing_requirements = result.missing_requirements
             analysis.dimension_scores = [d.as_dict() for d in result.dimension_scores]
+            analysis.learning_gaps = [g.as_dict() for g in result.learning_gaps]
             analysis.posting_country = result.posting_country
             analysis.eligibility = result.eligibility
             analysis.eligibility_note = result.eligibility_note
@@ -192,6 +194,7 @@ def enqueue_job(db: Session, job_id: int) -> bool:
     analysis.processing_status = ProcessingStatus.pending
     analysis.error_message = None
     analysis.retry_count = 0
+    analysis.stale = False  # a fresh run against the current description clears staleness
     db.commit()
     return True
 
@@ -254,6 +257,7 @@ def analyze_single(db: Session, job_id: int):
         analysis.matching_skills = result.matching_skills
         analysis.missing_requirements = result.missing_requirements
         analysis.dimension_scores = [d.as_dict() for d in result.dimension_scores]
+        analysis.learning_gaps = [g.as_dict() for g in result.learning_gaps]
         analysis.posting_country = result.posting_country
         analysis.eligibility = result.eligibility
         analysis.eligibility_note = result.eligibility_note

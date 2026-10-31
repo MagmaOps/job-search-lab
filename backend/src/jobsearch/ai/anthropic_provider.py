@@ -10,7 +10,13 @@ import json
 
 from ..config import Settings
 from . import prompts
-from .base import ApplicationDraft, DimensionScore, MatchResult, ProfileExtraction
+from .base import (
+    ApplicationDraft,
+    DimensionScore,
+    LearningGap,
+    MatchResult,
+    ProfileExtraction,
+)
 
 
 class AnthropicProvider:
@@ -97,6 +103,7 @@ class AnthropicProvider:
             detected_language=data.get("detected_language") or job_language,
             translated_summary=data.get("translated_summary"),
             dimension_scores=_parse_dimensions(data.get("dimension_scores")),
+            learning_gaps=_parse_learning_gaps(data.get("learning_gaps")),
             posting_country=data.get("posting_country") or None,
             eligibility=_norm_eligibility(data.get("eligibility")),
             eligibility_note=data.get("eligibility_note") or None,
@@ -201,6 +208,27 @@ def _norm_eligibility(value: object) -> str | None:
     """Coerce the model's eligibility verdict to one of the allowed values, else None."""
     v = str(value or "").strip().lower()
     return v if v in ("worldwide", "restricted", "unclear") else None
+
+
+def _parse_learning_gaps(raw: object) -> list[LearningGap]:
+    """Coerce the model's learning_gaps array into LearningGap objects, tolerantly."""
+    out: list[LearningGap] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict) or not item.get("skill"):
+            continue
+        level = str(item.get("level", "")).strip().lower()
+        if level not in ("basic", "average"):
+            level = "average"  # default to the safer, less-alarming label
+        out.append(
+            LearningGap(
+                skill=str(item["skill"]),
+                level=level,
+                why=str(item.get("why", "")),
+            )
+        )
+    return out
 
 
 def _parse_dimensions(raw: object) -> list[DimensionScore]:

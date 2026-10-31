@@ -141,6 +141,9 @@ analysis
   error_message, retry_count,
   detected_language, translated_summary,
   match_score, explanation, matching_skills (jsonb), missing_requirements (jsonb),
+  dimension_scores (jsonb),   -- per-dimension breakdown behind the score
+  learning_gaps (jsonb),      -- "gaps to close": [{skill, level: basic|average, why}]
+  stale (bool),               -- description edited after this score → show "stale", no auto-rescore
   model, created_at
   UNIQUE (job_id, cv_id)  -- re-analyze when CV changes = new row
 

@@ -26,6 +26,8 @@ class JobOut(ORMModel):
     discovered_at: datetime
     # analysis freshness vs the active CV: current | outdated | none | error
     analysis_state: str = "none"
+    # application generation vs the active CV: none | pending | done | error
+    application_state: str = "none"
     # analysis fields flattened in the router
     match_score: int | None = None
     translated_summary: str | None = None
@@ -34,6 +36,8 @@ class JobOut(ORMModel):
     missing_requirements: list | None = None
     # Per-dimension score breakdown: [{dimension, score, weight, reason}]
     dimension_scores: list | None = None
+    # Gaps to close / what to learn first: [{skill, level, why}], level ∈ basic|average
+    learning_gaps: list | None = None
     # Inferred posting location + eligibility verdict (worldwide|restricted|unclear)
     posting_country: str | None = None
     eligibility: str | None = None
@@ -49,6 +53,16 @@ class JobPatch(BaseModel):
 
     status: str | None = None  # new|saved|dismissed|applied|interview
     salary: str | None = None  # free-text salary range; "" clears it
+    description: str | None = None  # paste the full posting text (replaces the stored one)
+
+
+class JobDetailOut(ORMModel):
+    """Full single-job payload (includes the heavy description), fetched on demand."""
+
+    id: int
+    title: str
+    company: str | None
+    description: str | None
 
 
 class ManualJobIn(BaseModel):

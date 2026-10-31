@@ -98,6 +98,21 @@ Report requirements honestly: address every must-have — matched (in matching_s
 gapped (in missing_requirements) — never silently omitted. Prefer the posting's own term
 over a synonym when deciding whether a skill matches.
 
+BE LACONIC — this is read by the candidate at a glance:
+Write explanation and every dimension reason as ONE short clause, not full sentences. No
+preamble, no "the candidate", no restating the score. Terse and factual: "core stack
+matches; no Terraform" beats a paragraph. The whole explanation is at most two short
+clauses.
+
+GAPS TO CLOSE — what to learn first (learning_gaps):
+From missing_requirements, pick ONLY the skills that are BASELINE or COMMON for this kind
+of role — the things an average candidate for this posting would be expected to have, not
+exotic nice-to-haves. For each, give the skill, a level of how standard it is for the role
+("basic" = fundamental, expected of nearly everyone; "average" = common, most candidates
+have it), and a one-clause why. This is the actionable "learn these first" list; leave it
+empty when the candidate already covers the baseline. Never invent a gap the posting does
+not actually ask for.
+
 TRANSLATION:
 Detect the job language. If it is not English, put a short English translated_summary
 (2-4 sentences) covering role, key requirements, and location; otherwise it may be null.
@@ -118,15 +133,18 @@ unknown, and give a one-sentence eligibility_note citing the specific evidence.
 This is advisory for the candidate; it does NOT change match_score.
 
 OUTPUT — return ONLY JSON with keys: match_score (int 0-100, the weighted result after any
-gate/dealbreaker cap), explanation (string: 2-4 sentences citing the evidence behind the
-score, including any gate or dealbreaker that capped it), dimension_scores (array of
-objects, one per scored dimension, each {{"dimension": "<name>", "score": <int 0-100>,
-"weight": <float>, "reason": "<one sentence of evidence>"}} — use the four dimensions and
-weights above so the overall score is explainable), matching_skills (array: skills present
-in BOTH the profile/CV and the job), missing_requirements (array: must-have/required items
-the candidate lacks), detected_language (string), translated_summary (string or null),
-posting_country (string or null), eligibility ("worldwide" | "restricted" | "unclear"),
-eligibility_note (string or null).
+gate/dealbreaker cap), explanation (string: AT MOST two short clauses citing the decisive
+evidence, including any gate or dealbreaker that capped it — laconic), dimension_scores
+(array of objects, one per scored dimension, each {{"dimension": "<name>", "score": <int
+0-100>, "weight": <float>, "reason": "<one short clause of evidence>"}} — use the four
+dimensions and weights above so the overall score is explainable), matching_skills (array:
+skills present in BOTH the profile/CV and the job), missing_requirements (array:
+must-have/required items the candidate lacks), learning_gaps (array of objects, the
+baseline/common missing skills to learn first, each {{"skill": "<name>", "level": "basic" |
+"average", "why": "<one short clause>"}}; empty array when the baseline is covered),
+detected_language (string), translated_summary (string or null), posting_country (string or
+null), eligibility ("worldwide" | "restricted" | "unclear"), eligibility_note (string or
+null).
 
 Matching profile (JSON):
 {profile}
@@ -316,10 +334,10 @@ SPECS: dict[str, PromptSpec] = {
         description=(
             "Scores a job against the CV + matching profile using a weighted five-"
             "dimension rubric with eligibility/language gates, dealbreaker caps, an "
-            "untrusted-posting trust boundary, and a strict never-invent rule. Must return "
-            "JSON with match_score, explanation, matching_skills, missing_requirements, "
-            "detected_language, translated_summary. Available placeholders: {profile}, "
-            "{cv}, {title}, {description}."
+            "untrusted-posting trust boundary, and a strict never-invent rule. Output is "
+            "laconic. Must return JSON with match_score, explanation, matching_skills, "
+            "missing_requirements, learning_gaps, detected_language, translated_summary. "
+            "Available placeholders: {profile}, {cv}, {title}, {description}."
         ),
         required_placeholders=frozenset({"profile", "cv", "title", "description"}),
         default=DEFAULT_ANALYZE_PROMPT,

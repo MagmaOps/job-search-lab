@@ -30,9 +30,10 @@ def _seed_cv(db, skills):
     return cv
 
 
-def _seed_job(db, title="DevOps", desc="We use kubernetes and terraform on aws"):
+def _seed_job(db, title="DevOps", desc="We use kubernetes and terraform on aws",
+              salary=None):
     job = Job(source="remoteok", fingerprint="fp" + title, title=title,
-              description=desc, content_hash="ch" + title)
+              description=desc, content_hash="ch" + title, salary=salary)
     db.add(job)
     db.commit()
     return job
@@ -272,3 +273,152 @@ def test_api_lists_all_three_application_prompts_as_editable(api_ctx):
     r = client.put("/prompts/application_revise", json=body)
     assert r.status_code == 200
     assert r.json()["is_customized"] is True
+
+
+# ── /jobs: application indicator + filters ──────────────────────────────────
+def test_jobs_list_reports_application_state(api_ctx):
+    client, session = api_ctx
+    _seed_cv(session, ["kubernetes"])
+    job = _seed_job(session)
+
+    # No application yet → application_state "none".
+    row = next(j for j in client.get("/jobs").json() if j["id"] == job.id)
+    assert row["application_state"] == "none"
+
+    # Enqueue → pending shows in the list.
+    client.post(f"/jobs/{job.id}/application")
+    row = next(j for j in client.get("/jobs").json() if j["id"] == job.id)
+    assert row["application_state"] == "pending"
+
+    # Worker drains → done shows in the list.
+    application_service.generate_pending(session)
+    row = next(j for j in client.get("/jobs").json() if j["id"] == job.id)
+    assert row["application_state"] == "done"
+
+
+def test_jobs_filter_has_application(api_ctx):
+    client, session = api_ctx
+    _seed_cv(session, ["kubernetes"])
+    with_app = _seed_job(session, title="HasApp")
+    without_app = _seed_job(session, title="NoApp")
+    client.post(f"/jobs/{with_app.id}/application")
+
+    yes_ids = {j["id"] for j in client.get("/jobs?has_application=true").json()}
+    no_ids = {j["id"] for j in client.get("/jobs?has_application=false").json()}
+    assert with_app.id in yes_ids and without_app.id not in yes_ids
+    assert without_app.id in no_ids and with_app.id not in no_ids
+
+
+def test_jobs_filter_has_salary(api_ctx):
+    client, session = api_ctx
+    _seed_cv(session, ["kubernetes"])
+    paid = _seed_job(session, title="Paid", salary="EUR 80,000 – 100,000/year")
+    unpaid = _seed_job(session, title="Unpaid", salary=None)
+    blank = _seed_job(session, title="Blank", salary="   ")  # whitespace == absent
+
+    yes_ids = {j["id"] for j in client.get("/jobs?has_salary=true").json()}
+    no_ids = {j["id"] for j in client.get("/jobs?has_salary=false").json()}
+    assert paid.id in yes_ids
+    assert unpaid.id not in yes_ids and blank.id not in yes_ids
+    assert unpaid.id in no_ids and blank.id in no_ids and paid.id not in no_ids
+
+
+# ── Laconic analysis + learning_gaps (stub) ─────────────────────────────────
+def test_stub_analysis_is_laconic_and_exposes_learning_gaps():
+    from jobsearch.ai.stub import StubProvider
+
+    r = StubProvider().analyze_job(
+        job_title="DevOps Engineer",
+        job_description="kubernetes terraform aws",
+        job_language=None,
+        cv_text="kubernetes",
+        effective_profile={"skills": ["kubernetes"], "must_have_skills": ["kubernetes"],
+                           "nice_to_have_skills": [], "dealbreakers": []},
+    )
+    # Laconic: the explanation is short (one clause-ish), not a paragraph.
+    assert len(r.explanation) < 80
+    # learning_gaps exists as a list (empty for the stub, which never invents one offline).
+    assert r.learning_gaps == []
+
+
+def test_learning_gaps_persisted_to_analysis(db):
+    from jobsearch.models import Analysis
+    from jobsearch.services import analysis_service
+
+    _seed_cv(db, ["kubernetes"])
+    _seed_job(db)
+    analysis_service.analyze_pending(db)
+    a = db.query(Analysis).one()
+    # Column exists and round-trips (empty list from the stub).
+    assert a.learning_gaps == []
+
+
+def test_anthropic_parses_learning_gaps():
+    # Unit-test the parser directly (no network): tolerant coercion + level default.
+    from jobsearch.ai.anthropic_provider import _parse_learning_gaps
+
+    gaps = _parse_learning_gaps([
+        {"skill": "Terraform", "level": "basic", "why": "IaC is standard for DevOps"},
+        {"skill": "CI/CD", "level": "nonsense", "why": "pipelines expected"},  # bad level
+        {"level": "basic"},  # no skill → dropped
+        "not a dict",         # dropped
+    ])
+    assert [g.skill for g in gaps] == ["Terraform", "CI/CD"]
+    assert gaps[0].level == "basic"
+    assert gaps[1].level == "average"  # unknown level coerced to the safer default
+
+
+# ── Manual full-description editor ──────────────────────────────────────────
+def test_get_job_returns_full_description(api_ctx):
+    client, session = api_ctx
+    job = _seed_job(session, desc="Full posting text with every requirement listed.")
+    r = client.get(f"/jobs/{job.id}")
+    assert r.status_code == 200
+    assert r.json()["description"] == "Full posting text with every requirement listed."
+
+
+def test_patch_description_replaces_and_marks_analysis_stale(api_ctx):
+    from jobsearch.models import Analysis
+    from jobsearch.services import analysis_service
+
+    client, session = api_ctx
+    _seed_cv(session, ["kubernetes"])
+    job = _seed_job(session, desc="truncated…")
+    analysis_service.analyze_pending(session)  # a current-CV analysis exists
+    a = session.query(Analysis).filter(Analysis.job_id == job.id).one()
+    assert a.stale is False
+
+    r = client.patch(f"/jobs/{job.id}", json={"description": "FULL description now."})
+    assert r.status_code == 200
+
+    # Description replaced.
+    assert client.get(f"/jobs/{job.id}").json()["description"] == "FULL description now."
+    # The analysis row is KEPT (score still visible) but flagged stale — the worker will
+    # NOT silently re-score it because the row is still `done`.
+    session.expire_all()
+    a = session.query(Analysis).filter(Analysis.job_id == job.id).one()
+    assert a.stale is True
+    row = next(j for j in client.get("/jobs").json() if j["id"] == job.id)
+    assert row["analysis_state"] == "stale"
+
+    # The background drain must NOT pick up a stale (still-done) analysis.
+    assert analysis_service.analyze_pending(session) == 0
+
+    # A manual re-analyze clears staleness.
+    analysis_service.enqueue_job(session, job.id)
+    analysis_service.analyze_pending(session)
+    session.expire_all()
+    a = session.query(Analysis).filter(Analysis.job_id == job.id).one()
+    assert a.stale is False
+    row = next(j for j in client.get("/jobs").json() if j["id"] == job.id)
+    assert row["analysis_state"] == "current"
+
+
+def test_jobs_list_exposes_learning_gaps_field(api_ctx):
+    client, session = api_ctx
+    _seed_cv(session, ["kubernetes"])
+    job = _seed_job(session)
+    from jobsearch.services import analysis_service
+    analysis_service.analyze_pending(session)
+    row = next(j for j in client.get("/jobs").json() if j["id"] == job.id)
+    assert "learning_gaps" in row

@@ -10,6 +10,19 @@ export interface DimensionScore {
   reason: string;
 }
 
+export interface LearningGap {
+  skill: string;
+  level: "basic" | "average";
+  why: string;
+}
+
+export interface JobDetail {
+  id: number;
+  title: string;
+  company: string | null;
+  description: string | null;
+}
+
 export interface Job {
   id: number;
   source: string;
@@ -22,13 +35,15 @@ export interface Job {
   work_type: string | null; // remote | hybrid | onsite | null
   status: string;
   discovered_at: string;
-  analysis_state: "current" | "outdated" | "none" | "error" | "pending";
+  analysis_state: "current" | "outdated" | "stale" | "none" | "error" | "pending";
+  application_state: "none" | "pending" | "done" | "error";
   match_score: number | null;
   translated_summary: string | null;
   explanation: string | null;
   matching_skills: string[] | null;
   missing_requirements: string[] | null;
   dimension_scores: DimensionScore[] | null;
+  learning_gaps: LearningGap[] | null;
   posting_country: string | null;
   eligibility: "worldwide" | "restricted" | "unclear" | null;
   eligibility_note: string | null;
@@ -126,6 +141,9 @@ export const api = {
     req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   setJobSalary: (id: number, salary: string) =>
     req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ salary }) }),
+  getJob: (id: number) => req<JobDetail>(`/jobs/${id}`),
+  setJobDescription: (id: number, description: string) =>
+    req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ description }) }),
   reanalyze: (id: number) => req(`/jobs/${id}/reanalyze`, { method: "POST" }),
   addManual: (body: Record<string, unknown>) =>
     req<Job>(`/jobs/manual`, { method: "POST", body: JSON.stringify(body) }),

@@ -169,6 +169,10 @@ class Analysis(Base):
     # {"dimension": str, "score": int, "weight": float, "reason": str}. Lets the
     # dashboard explain WHY a job scored what it did. Null for pre-breakdown analyses.
     dimension_scores: Mapped[list | None] = mapped_column(JSONB)
+    # Actionable "gaps to close": baseline/common skills for the role the CV lacks, each
+    # {"skill": str, "level": "basic"|"average", "why": str}. The learn-these-first subset
+    # of missing_requirements. Null/empty when the baseline is covered.
+    learning_gaps: Mapped[list | None] = mapped_column(JSONB)
     # Inferred posting location + applicant-eligibility verdict (advisory; does not affect
     # match_score). eligibility ∈ {worldwide, restricted, unclear}.
     posting_country: Mapped[str | None] = mapped_column(String(64))
@@ -176,6 +180,10 @@ class Analysis(Base):
     eligibility_note: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    # True when the job's description was edited after this analysis ran, so the score no
+    # longer reflects the current text. The row stays `done` (the worker won't silently
+    # re-score it); the dashboard shows it as "stale" until the user re-analyzes.
+    stale: Mapped[bool] = mapped_column(Boolean, default=False)
 
     job: Mapped[Job] = relationship(back_populates="analyses")
 

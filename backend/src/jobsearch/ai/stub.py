@@ -146,15 +146,14 @@ class StubProvider:
 
         dims = [
             DimensionScore("Technical skills", technical, 0.30,
-                           f"{must_hit}/{must_total} must-haves and {nice_hit} other skill(s) present in the posting."),
+                           f"{must_hit}/{must_total} must-haves, {nice_hit} extra(s)"),
             DimensionScore("Experience match", experience, 0.25,
-                           f"{derived_hit} CV-derived skill(s) appear in the posting text."),
+                           f"{derived_hit} CV skill(s) in posting"),
             DimensionScore("Seniority fit", seniority, 0.15,
-                           f"Profile min seniority '{min_sen or 'unset'}' "
-                           + ("named in" if seniority >= 85 else "not clearly in") + " the posting."),
+                           f"min '{min_sen or 'unset'}' "
+                           + ("named" if seniority >= 85 else "not named")),
             DimensionScore("Career alignment", alignment, 0.30,
-                           "Role overlaps the candidate's skills." if matched
-                           else "Little overlap with the candidate's skills."),
+                           "skills overlap" if matched else "little overlap"),
         ]
         score = int(round(sum(d.score * d.weight for d in dims)))
 
@@ -182,12 +181,18 @@ class StubProvider:
             except Exception:
                 lang = None
 
+        # Laconic explanation (one clause), matching the prompt's terse contract.
         explanation = (
-            f"Stub analysis: matched {len(matched)} profile skill(s)"
-            + (f", missing must-haves: {', '.join(missing)}" if missing else "")
-            + (" (score capped by a dealbreaker or eligibility gate)" if caps else "")
-            + ". Configure an Anthropic key for real analysis."
+            f"{len(matched)} skill(s) matched"
+            + (f"; missing {', '.join(missing)}" if missing else "")
+            + ("; capped by gate" if caps else "")
+            + " (stub)"
         )
+
+        # learning_gaps: offline the stub's only vocabulary is the profile's own skills, so
+        # it cannot honestly identify a role-baseline skill the CV lacks without inventing
+        # one. Per the never-invent rule it emits none; the real provider fills this in.
+        learning_gaps: list = []
 
         return MatchResult(
             match_score=score,
@@ -197,6 +202,7 @@ class StubProvider:
             detected_language=lang,
             translated_summary=None,
             dimension_scores=dims,
+            learning_gaps=learning_gaps,
             posting_country=country,
             eligibility=eligibility,
             eligibility_note=elig_note,

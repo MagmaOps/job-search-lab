@@ -38,6 +38,23 @@ class DimensionScore:
 
 
 @dataclass
+class LearningGap:
+    """A skill the posting expects that the CV lacks AND that is baseline for the role.
+
+    The actionable subset of missing_requirements: not every missing nice-to-have, only
+    the common/expected skills worth learning first. `level` is how standard the skill is
+    for this kind of role ("basic" or "average"), not the candidate's level.
+    """
+
+    skill: str
+    level: str  # "basic" | "average"
+    why: str = ""  # one short clause: why it matters for this role
+
+    def as_dict(self) -> dict:
+        return {"skill": self.skill, "level": self.level, "why": self.why}
+
+
+@dataclass
 class MatchResult:
     """Outcome of validating one job against the effective matching profile."""
 
@@ -50,6 +67,9 @@ class MatchResult:
     # Per-dimension breakdown explaining the overall score. Empty when the provider
     # does not return one.
     dimension_scores: list[DimensionScore] = field(default_factory=list)
+    # The actionable subset of missing_requirements: baseline/common skills for this role
+    # that the CV lacks, framed as what to learn first. Empty when there are none.
+    learning_gaps: list[LearningGap] = field(default_factory=list)
     # Where the role appears to be posted / hire from, inferred from the description
     # (salary in US cities, "US only", named country, etc.). Best-effort guess.
     posting_country: str | None = None

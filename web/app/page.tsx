@@ -30,9 +30,18 @@ const ELIGIBILITY_META: Record<string, { cls: string; label: string }> = {
 const ANALYSIS_STATE: Record<string, { cls: string; label: string }> = {
   current: { cls: "current", label: "Analyzed against the current CV" },
   outdated: { cls: "outdated", label: "Analyzed against an older CV — re-analyze for an up-to-date score" },
+  stale: { cls: "outdated", label: "The description changed since this score — re-analyze for an up-to-date score" },
   error: { cls: "error", label: "Last analysis failed — try re-analyze" },
   none: { cls: "none", label: "Not analyzed against the current CV" },
   pending: { cls: "pending", label: "Queued — the worker is analyzing this job" },
+};
+
+// Application-generation indicator vs the active CV. Mirrors the analysis-state dot.
+const APPLICATION_STATE: Record<string, { cls: string; label: string; short: string }> = {
+  none: { cls: "none", label: "No application generated yet", short: "—" },
+  pending: { cls: "pending", label: "Queued — the worker is drafting the application", short: "drafting…" },
+  done: { cls: "current", label: "Application ready — open Details to view and edit", short: "ready" },
+  error: { cls: "error", label: "Application generation failed — open Details to retry", short: "failed" },
 };
 
 function SalaryEditor({
@@ -215,6 +224,83 @@ function ApplicationPanel({ jobId }: { jobId: number }) {
   );
 }
 
+function DescriptionEditor({
+  jobId,
+  onSaved,
+}: {
+  jobId: number;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [value, setValue] = useState("");
+  const [original, setOriginal] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  // Lazy-load the full description only when the editor is first opened — keeps the list
+  // payload lean (descriptions can be large, and we edit one job at a time).
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !loaded) {
+      const d = await api.getJob(jobId);
+      setValue(d.description ?? "");
+      setOriginal(d.description ?? "");
+      setLoaded(true);
+    }
+  }
+
+  async function save() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await api.setJobDescription(jobId, value);
+      setOriginal(value);
+      setMsg("Saved. Re-analyze to score against the full text.");
+      onSaved(); // refresh the list so the analysis indicator flips to not-current
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dirty = loaded && value !== original;
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button className="secondary" onClick={toggle}>
+        {open ? "Hide full description" : "Edit full description"}
+      </button>
+      {open && (
+        <div style={{ marginTop: 8 }}>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Paste the complete posting text here. It replaces the stored description. This
+            does not re-score automatically — Re-analyze when you&apos;re ready.
+          </p>
+          {!loaded ? (
+            <span className="muted">Loading…</span>
+          ) : (
+            <textarea
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              rows={12}
+              style={{ width: "100%", fontFamily: "monospace", fontSize: 13 }}
+            />
+          )}
+          <div className="row" style={{ marginTop: 6 }}>
+            <button onClick={save} disabled={!dirty || busy}>
+              {busy ? "Saving…" : "Save description"}
+            </button>
+            {msg && <span className="muted">{msg}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
@@ -230,6 +316,8 @@ export default function Dashboard() {
   const [workType, setWorkType] = useState("");
   const [eligibility, setEligibility] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [salaryFilter, setSalaryFilter] = useState(""); // "" | "yes" | "no"
+  const [appFilter, setAppFilter] = useState(""); // "" | "yes" | "no"
 
   const load = useCallback(async () => {
     setErr(null);
@@ -242,13 +330,16 @@ export default function Dashboard() {
       if (workType) params.work_type = workType;
       if (eligibility) params.eligibility = eligibility;
       if (statusFilter) params.status = statusFilter;
+      if (salaryFilter) params.has_salary = salaryFilter === "yes" ? "true" : "false";
+      if (appFilter) params.has_application = appFilter === "yes" ? "true" : "false";
       const [j, s] = await Promise.all([api.jobs(params), api.status()]);
       setJobs(j);
       setStatus(s);
     } catch (e) {
       setErr(String(e));
     }
-  }, [minScore, location, company, language, workType, eligibility, statusFilter]);
+  }, [minScore, location, company, language, workType, eligibility, statusFilter,
+      salaryFilter, appFilter]);
 
   useEffect(() => {
     load();
@@ -256,7 +347,9 @@ export default function Dashboard() {
 
   // While any job is queued/analyzing, poll so spinners resolve on their own — the worker
   // does the analysis, so this reflects its progress even if the page was just reopened.
-  const hasPending = jobs.some((j) => j.analysis_state === "pending");
+  const hasPending = jobs.some(
+    (j) => j.analysis_state === "pending" || j.application_state === "pending"
+  );
   useEffect(() => {
     if (!hasPending) return;
     const t = setInterval(() => load(), 3000);
@@ -372,6 +465,18 @@ export default function Dashboard() {
             <option value="">All statuses</option>
             {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+          <select value={salaryFilter} onChange={(e) => setSalaryFilter(e.target.value)}
+                  title="Filter by whether a salary is recorded">
+            <option value="">Any salary</option>
+            <option value="yes">Has salary</option>
+            <option value="no">No salary</option>
+          </select>
+          <select value={appFilter} onChange={(e) => setAppFilter(e.target.value)}
+                  title="Filter by whether an application was generated">
+            <option value="">Any application</option>
+            <option value="yes">Has application</option>
+            <option value="no">No application</option>
+          </select>
           <button className="secondary" onClick={load}>Apply</button>
         </div>
       </div>
@@ -386,12 +491,12 @@ export default function Dashboard() {
             <tr>
               <th>Score</th><th>Title</th><th>Company</th><th>Location</th>
               <th>Type</th><th>Eligibility</th><th>Salary</th><th>Lang</th>
-              <th>Status</th><th>Found</th><th></th>
+              <th>Status</th><th>App</th><th>Found</th><th></th>
             </tr>
           </thead>
           <tbody>
             {jobs.length === 0 && (
-              <tr><td colSpan={11} className="muted">No jobs yet. Run a search.</td></tr>
+              <tr><td colSpan={12} className="muted">No jobs yet. Run a search.</td></tr>
             )}
             {jobs.map((j) => (
               <Fragment key={j.id}>
@@ -443,6 +548,23 @@ export default function Dashboard() {
                       {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </td>
+                  <td>
+                    {j.application_state === "pending" ? (
+                      <span className="analyzing" title={APPLICATION_STATE.pending.label}>
+                        <span className="spinner" />
+                        <span className="muted" style={{ fontSize: 12 }}>drafting…</span>
+                      </span>
+                    ) : (
+                      <span
+                        className={`chip app-${j.application_state}`}
+                        title={APPLICATION_STATE[j.application_state]?.label || ""}
+                        onClick={() => setExpanded(expanded === j.id ? null : j.id)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        {APPLICATION_STATE[j.application_state]?.short ?? "—"}
+                      </span>
+                    )}
+                  </td>
                   <td className="muted">{new Date(j.discovered_at).toLocaleDateString()}</td>
                   <td>
                     <button className="secondary"
@@ -453,7 +575,7 @@ export default function Dashboard() {
                 </tr>
                 {expanded === j.id && (
                   <tr>
-                    <td colSpan={11}>
+                    <td colSpan={12}>
                       {j.translated_summary && (
                         <p><strong>Summary:</strong> {j.translated_summary}</p>
                       )}
@@ -495,9 +617,24 @@ export default function Dashboard() {
                         <p><strong>Missing:</strong>{" "}
                           {j.missing_requirements.map((s) => <span key={s} className="chip">{s}</span>)}</p>
                       )}
+                      {j.learning_gaps && j.learning_gaps.length > 0 && (
+                        <div className="gaps">
+                          <strong>Gaps to close (learn first):</strong>
+                          <ul>
+                            {j.learning_gaps.map((g) => (
+                              <li key={g.skill}>
+                                <span className={`chip gap-${g.level}`}>{g.level}</span>{" "}
+                                <strong>{g.skill}</strong>
+                                {g.why ? <span className="muted"> — {g.why}</span> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <div className="row" style={{ marginBottom: 10 }}>
                         <SalaryEditor job={j} onSave={saveSalary} />
                       </div>
+                      <DescriptionEditor jobId={j.id} onSaved={load} />
                       <button className="secondary" onClick={() => reanalyze(j.id)}
                               disabled={j.analysis_state === "pending"}>
                         {j.analysis_state === "pending" ? "Analyzing…" : "Re-analyze"}

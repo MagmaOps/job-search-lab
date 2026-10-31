@@ -26,6 +26,7 @@ from .schemas import (
     ApplicationOut,
     ApplicationUpdate,
     CVOut,
+    JobDetailOut,
     JobOut,
     JobPatch,
     ManualJobIn,
@@ -50,7 +51,7 @@ from .sources import source_names
 from .sources.base import normalize_work_type
 
 settings = get_settings()
-app = FastAPI(title="Job Search Lab", version="1.1.0")
+app = FastAPI(title="Job Search Lab", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,12 +89,21 @@ def list_jobs(
     work_type: str | None = None,
     eligibility: str | None = None,
     status: str | None = None,
+    has_salary: bool | None = None,
+    has_application: bool | None = None,
     sort: str = "score",
 ) -> list[JobOut]:
     cv_id = _active_cv_id(db)
-    q = db.query(Job, Analysis).outerjoin(
-        Analysis,
-        (Analysis.job_id == Job.id) & (Analysis.cv_id == cv_id),
+    q = (
+        db.query(Job, Analysis, Application)
+        .outerjoin(
+            Analysis,
+            (Analysis.job_id == Job.id) & (Analysis.cv_id == cv_id),
+        )
+        .outerjoin(
+            Application,
+            (Application.job_id == Job.id) & (Application.cv_id == cv_id),
+        )
     )
 
     # Job ids that have a completed analysis against some OTHER (older) CV — used to tell
@@ -121,14 +131,25 @@ def list_jobs(
         q = q.filter(Job.status == JobStatus(status))
     if min_score is not None:
         q = q.filter(Analysis.match_score >= min_score)
+    if has_salary is not None:
+        # "Present" = a non-null, non-blank salary string. has_salary=false → the inverse.
+        salary_present = (Job.salary.isnot(None)) & (func.trim(Job.salary) != "")
+        q = q.filter(salary_present if has_salary else ~salary_present)
+    if has_application is not None:
+        # "Has application" = an application row exists for the active CV (any status).
+        app_present = Application.id.isnot(None)
+        q = q.filter(app_present if has_application else ~app_present)
 
     rows = q.all()
 
     out: list[JobOut] = []
-    for job, analysis in rows:
+    for job, analysis, application in rows:
         if analysis and analysis.processing_status == ProcessingStatus.pending:
             # Queued (manual re-analyze or backlog) and not yet processed by the worker.
             state = "pending"
+        elif analysis and analysis.processing_status == ProcessingStatus.done and analysis.stale:
+            # Scored, but the description changed since — needs a manual re-analyze.
+            state = "stale"
         elif analysis and analysis.processing_status == ProcessingStatus.done:
             state = "current"
         elif analysis and analysis.processing_status == ProcessingStatus.error:
@@ -137,6 +158,8 @@ def list_jobs(
             state = "outdated"
         else:
             state = "none"
+        # Application indicator vs the active CV: none | pending | done | error.
+        app_state = application.processing_status.value if application else "none"
         out.append(
             JobOut(
                 id=job.id,
@@ -151,12 +174,14 @@ def list_jobs(
                 status=job.status.value,
                 discovered_at=job.discovered_at,
                 analysis_state=state,
+                application_state=app_state,
                 match_score=analysis.match_score if analysis else None,
                 translated_summary=analysis.translated_summary if analysis else None,
                 explanation=analysis.explanation if analysis else None,
                 matching_skills=analysis.matching_skills if analysis else None,
                 missing_requirements=analysis.missing_requirements if analysis else None,
                 dimension_scores=analysis.dimension_scores if analysis else None,
+                learning_gaps=analysis.learning_gaps if analysis else None,
                 posting_country=analysis.posting_country if analysis else None,
                 eligibility=analysis.eligibility if analysis else None,
                 eligibility_note=analysis.eligibility_note if analysis else None,
@@ -171,12 +196,26 @@ def list_jobs(
     return out
 
 
+@app.get("/jobs/{job_id}", response_model=JobDetailOut)
+def get_job(job_id: int, db: Session = Depends(get_db)) -> Job:
+    """Full single job including the heavy description. Fetched on demand (e.g. when the
+    dashboard opens the description editor) so the list payload stays lean."""
+    job = db.get(Job, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
+
+
 @app.patch("/jobs/{job_id}", response_model=JobOut)
 def update_job(
     job_id: int, body: JobPatch, db: Session = Depends(get_db)
 ) -> JobOut:
-    """Update a job's user-editable fields (status and/or salary). Only the fields present
-    in the request are changed; sending salary="" clears a stored salary."""
+    """Update a job's user-editable fields (status, salary, and/or description). Only the
+    fields present in the request are changed; sending salary="" clears a stored salary.
+
+    Pasting a fuller `description` REPLACES the stored (often truncated) one. It does not
+    auto-re-analyze — it drops the current-CV analysis so the dashboard indicator flips to
+    "not current", prompting a manual Re-analyze against the fuller text when you choose."""
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(404, "Job not found")
@@ -190,6 +229,18 @@ def update_job(
     if "salary" in fields:
         salary = (fields["salary"] or "").strip()
         job.salary = salary or None  # empty string clears it
+    if "description" in fields and fields["description"] is not None:
+        job.description = fields["description"]
+        # Refresh the content hash so dedup/change-detection sees the new text.
+        job.content_hash = content_hash(job.title, job.description)
+        # Mark the current-CV analysis stale rather than deleting it: the score stays
+        # visible but flagged, and because the row is still `done` the background worker
+        # will NOT silently re-score it. The user re-analyzes manually when ready.
+        cv_id = _active_cv_id(db)
+        if cv_id is not None:
+            db.query(Analysis).filter(
+                Analysis.job_id == job.id, Analysis.cv_id == cv_id
+            ).update({Analysis.stale: True})
 
     db.commit()
     db.refresh(job)
@@ -236,6 +287,7 @@ def add_manual_job(body: ManualJobIn, db: Session = Depends(get_db)) -> JobOut:
         matching_skills=analysis.matching_skills if analysis else None,
         missing_requirements=analysis.missing_requirements if analysis else None,
         dimension_scores=analysis.dimension_scores if analysis else None,
+        learning_gaps=analysis.learning_gaps if analysis else None,
         posting_country=analysis.posting_country if analysis else None,
         eligibility=analysis.eligibility if analysis else None,
         eligibility_note=analysis.eligibility_note if analysis else None,

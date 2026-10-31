@@ -93,6 +93,8 @@ SEED_QUERIES = [
 # on an existing table is added here. Each statement is idempotent (IF NOT EXISTS).
 _COLUMN_TOPUPS = (
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS dimension_scores JSONB',
+    'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS learning_gaps JSONB',
+    'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS stale BOOLEAN DEFAULT FALSE',
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS posting_country VARCHAR(64)',
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS eligibility VARCHAR(16)',
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS eligibility_note TEXT',
