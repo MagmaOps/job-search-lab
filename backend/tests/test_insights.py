@@ -259,3 +259,42 @@ def test_insights_canonicalize_prompt_registered_and_valid():
     from jobsearch.ai.stub import StubProvider
     m = StubProvider().canonicalize_skills(["Linux", "K8s"])
     assert m == {"Linux": "Linux", "K8s": "K8s"}
+
+
+# ── Grouping diagnostics (visibility of AI vs fallback) ─────────────────────
+def test_grouping_is_ai_when_provider_merges(db, monkeypatch):
+    cv = _seed_cv(db)
+    _seed_analysis(db, cv.id, ["Linux"])
+    _seed_analysis(db, cv.id, ["Linux (not evidenced)"])
+    _patch_provider(monkeypatch, _FakeProvider({
+        "Linux": "Linux", "Linux (not evidenced)": "Linux",
+    }))
+    snap = insights_service.refresh_insights(db)
+    assert snap.grouping == "ai"
+    assert snap.grouping_error is None
+
+
+def test_grouping_is_deterministic_when_provider_fails(db, monkeypatch):
+    cv = _seed_cv(db)
+    _seed_analysis(db, cv.id, ["Linux"])
+
+    class _Boom:
+        model = "boom"
+        def canonicalize_skills(self, labels, template=None):
+            raise RuntimeError("connection refused")
+
+    _patch_provider(monkeypatch, _Boom())
+    snap = insights_service.refresh_insights(db)
+    assert snap.grouping == "deterministic"
+    assert "connection refused" in snap.grouping_error
+
+
+def test_grouping_is_deterministic_with_stub_identity(db):
+    """With the real stub (no key), canonicalize_skills returns identity → no merge →
+    grouping is 'deterministic' with a clear reason."""
+    cv = _seed_cv(db)
+    _seed_analysis(db, cv.id, ["Linux"])
+    _seed_analysis(db, cv.id, ["Terraform"])
+    snap = insights_service.refresh_insights(db)
+    assert snap.grouping == "deterministic"
+    assert snap.grouping_error  # has a reason

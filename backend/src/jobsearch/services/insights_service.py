@@ -131,42 +131,58 @@ def refresh_insights(db: Session) -> Insights | None:
 
     # AI canonicalization pass (best-effort) over the distinct display labels, merging
     # semantic duplicates the deterministic layer can't catch. On any failure, keep the
-    # deterministic grouping.
-    canonical_of = _ai_canonical_map(db, list(labels.values()))
+    # deterministic grouping — but record WHY it fell back so the user can see it.
+    canonical_of, grouping, grouping_error = _ai_canonical_map(
+        db, list(labels.values())
+    )
 
     items = _build_items(counts, labels, severity, why, canonical_of)
 
     # Overwrite the single stored snapshot.
     db.query(Insights).delete()
-    snapshot = Insights(cv_id=cv.id, jobs_analyzed=len(rows), items=items)
+    snapshot = Insights(
+        cv_id=cv.id, jobs_analyzed=len(rows), items=items,
+        grouping=grouping, grouping_error=grouping_error,
+    )
     db.add(snapshot)
     db.commit()
     db.refresh(snapshot)
     return snapshot
 
 
-def _ai_canonical_map(db: Session, display_labels: list[str]) -> dict[str, str]:
-    """Return {display_label -> canonical name} from the provider, or {} on failure.
+def _ai_canonical_map(
+    db: Session, display_labels: list[str]
+) -> tuple[dict[str, str], str, str | None]:
+    """Return (mapping, grouping_method, error) from the provider.
 
-    Best-effort: a provider error, missing key, or malformed response degrades to no
-    semantic grouping (the deterministic aggregation stands). The stub returns identity, so
-    offline/test runs simply get no extra merging.
+    grouping_method is "ai" if the provider returned a mapping, "deterministic" on any
+    failure (stub, error, empty result). `error` is None on success or a short reason on
+    failure so the user can see WHY the AI wasn't involved.
     """
     if not display_labels:
-        return {}
+        return {}, "deterministic", "no labels to group"
     try:
         provider = get_provider()
         template = prompt_service.get_template(db, prompts.INSIGHTS_CANONICALIZE)
         mapping = provider.canonicalize_skills(display_labels, template=template)
         # Keep only clean mappings for labels we sent.
-        return {
+        result = {
             lbl: mapping[lbl].strip()
             for lbl in display_labels
             if isinstance(mapping.get(lbl), str) and mapping[lbl].strip()
         }
-    except Exception:  # never let canonicalization break a refresh
+        if not result:
+            return {}, "deterministic", "AI returned no usable mappings"
+        # If the stub returned identity (no merging happened), still report deterministic.
+        merged = any(
+            result[lbl].casefold() != lbl.casefold() for lbl in display_labels if lbl in result
+        )
+        return result, ("ai" if merged else "deterministic"), (
+            None if merged else "stub provider (no AI key) — identity mapping"
+        )
+    except Exception as exc:  # never let canonicalization break a refresh
         log.exception("insights canonicalization failed; using deterministic grouping")
-        return {}
+        return {}, "deterministic", str(exc)[:300]
 
 
 def _build_items(

@@ -258,6 +258,11 @@ class Insights(Base):
     jobs_analyzed: Mapped[int] = mapped_column(Integer, default=0)
     # Ranked gaps: [{skill, count, severity: "basic"|"average"|null, why}], most-asked first.
     items: Mapped[list | None] = mapped_column(JSONB, default=list)
+    # "ai" if the AI canonicalization pass ran, "deterministic" if it fell back (error or
+    # stub). `grouping_error` holds the reason when it fell back, so the user can see WHY
+    # the AI wasn't involved instead of guessing.
+    grouping: Mapped[str] = mapped_column(String(16), default="deterministic")
+    grouping_error: Mapped[str | None] = mapped_column(Text)
     computed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 

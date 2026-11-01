@@ -180,6 +180,10 @@ class InsightsOut(ORMModel):
     jobs_analyzed: int
     # Ranked gaps: [{skill, count, severity: basic|average|null, why}]
     items: list | None
+    # "ai" if the AI canonicalization ran, "deterministic" if it fell back.
+    grouping: str = "deterministic"
+    # The reason the AI wasn't used, when grouping is "deterministic". None on success.
+    grouping_error: str | None = None
     computed_at: datetime
     # True when the snapshot was computed against a CV that is no longer active — the UI
     # shows a "Refresh to update" hint. Set by the router, not stored.

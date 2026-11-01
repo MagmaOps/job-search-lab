@@ -122,6 +122,8 @@ export interface Insights {
   cv_id: number | null;
   jobs_analyzed: number;
   items: InsightItem[] | null;
+  grouping: "ai" | "deterministic";
+  grouping_error: string | null;
   computed_at: string;
   stale_cv: boolean;
 }

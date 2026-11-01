@@ -94,6 +94,22 @@ export default function InsightsPage() {
             the active CV.
           </div>
         )}
+        {data && data.grouping === "deterministic" && data.grouping_error && (
+          <div className="detail" style={{ color: "var(--bad)" }}>
+            <strong>AI grouping did not run:</strong> {data.grouping_error}
+            <br />
+            <span className="muted">
+              Skill variants may appear as separate rows. Check the API pod has
+              ANTHROPIC_API_KEY set and the <code>insights_canonicalize</code> prompt is
+              registered, then Refresh again.
+            </span>
+          </div>
+        )}
+        {data && data.grouping === "ai" && (
+          <div className="detail" style={{ color: "var(--good)" }}>
+            AI semantic grouping applied — semantic duplicates merged.
+          </div>
+        )}
       </div>
 
       {err && <div className="panel error">{err}</div>}
