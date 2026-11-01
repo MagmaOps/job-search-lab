@@ -355,3 +355,14 @@ class StubProvider:
             reviewer_notes=reviewer_notes,
             model=self.model,
         )
+
+    def canonicalize_skills(
+        self, labels: list[str], template: str | None = None
+    ) -> dict[str, str]:
+        """Offline identity map: no semantic grouping without a model.
+
+        Maps each label to its trimmed self. The deterministic alias/casefold merge lives in
+        insights_service; the stub adds no semantic clustering, so the offline Insights
+        result is exactly the deterministic aggregation (and tests stay token-free).
+        """
+        return {label: (label or "").strip() for label in labels}

@@ -201,6 +201,28 @@ class AnthropicProvider:
             model=self.model,
         )
 
+    def canonicalize_skills(
+        self, labels: list[str], template: str | None = None
+    ) -> dict[str, str]:
+        if not labels:
+            return {}
+        tmpl = template or prompts.DEFAULT_INSIGHTS_CANONICALIZE_PROMPT
+        # One label per line; the response is a small {label: canonical} object.
+        data = self._complete_json(
+            prompts.render(
+                prompts.INSIGHTS_CANONICALIZE, tmpl, labels="\n".join(labels)
+            ),
+            max_tokens=2000,
+        )
+        # Keep only mappings for labels we actually sent, with non-empty canonical names;
+        # any label the model omitted falls back to itself (handled by the caller).
+        out: dict[str, str] = {}
+        for label in labels:
+            canonical = data.get(label)
+            if isinstance(canonical, str) and canonical.strip():
+                out[label] = canonical.strip()
+        return out
+
 
 def _escape_control_chars_in_strings(text: str) -> str:
     """Escape raw control characters that appear *inside* JSON string literals.

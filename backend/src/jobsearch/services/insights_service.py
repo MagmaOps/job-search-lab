@@ -9,17 +9,28 @@ normalization (no AI call), so Refresh is fast and free.
 Signal source: `analysis.missing_requirements` (what postings wanted that the CV lacks),
 ranked by how often each normalized skill appears. Severity comes from
 `analysis.learning_gaps` (basic | average) where the same skill was flagged there.
+
+Two grouping layers:
+1. Deterministic (always, free): casefold + a small alias map merges obvious spellings.
+2. AI canonicalization (on Refresh, best-effort): the provider clusters semantic duplicates
+   the string rules can't catch ("Linux" vs "Linux-based infrastructure operation"). If the
+   AI call fails, the deterministic result stands — Insights never breaks.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 
 from sqlalchemy.orm import Session
 
+from ..ai import get_provider, prompts
 from ..models import Analysis, Insights, ProcessingStatus
+from . import prompt_service
 from .cv_service import get_active_cv
+
+log = logging.getLogger("jobsearch.insights")
 
 # Small alias map so obvious variants merge into one ranked row instead of fragmenting the
 # count. Keys/values are already normalized (casefolded). Extend as patterns show up.
@@ -112,17 +123,18 @@ def refresh_insights(db: Session) -> Insights | None:
             if gap.get("why") and key not in why:
                 why[key] = str(gap["why"]).strip()
 
-    items = []
-    for key, count in counts.most_common():
-        label = label_votes[key].most_common(1)[0][0] if label_votes.get(key) else key
-        items.append(
-            {
-                "skill": label,
-                "count": count,
-                "severity": severity.get(key),
-                "why": why.get(key, ""),
-            }
-        )
+    # Per-key display label = most common surface spelling.
+    labels = {
+        key: (label_votes[key].most_common(1)[0][0] if label_votes.get(key) else key)
+        for key in counts
+    }
+
+    # AI canonicalization pass (best-effort) over the distinct display labels, merging
+    # semantic duplicates the deterministic layer can't catch. On any failure, keep the
+    # deterministic grouping.
+    canonical_of = _ai_canonical_map(db, list(labels.values()))
+
+    items = _build_items(counts, labels, severity, why, canonical_of)
 
     # Overwrite the single stored snapshot.
     db.query(Insights).delete()
@@ -131,3 +143,73 @@ def refresh_insights(db: Session) -> Insights | None:
     db.commit()
     db.refresh(snapshot)
     return snapshot
+
+
+def _ai_canonical_map(db: Session, display_labels: list[str]) -> dict[str, str]:
+    """Return {display_label -> canonical name} from the provider, or {} on failure.
+
+    Best-effort: a provider error, missing key, or malformed response degrades to no
+    semantic grouping (the deterministic aggregation stands). The stub returns identity, so
+    offline/test runs simply get no extra merging.
+    """
+    if not display_labels:
+        return {}
+    try:
+        provider = get_provider()
+        template = prompt_service.get_template(db, prompts.INSIGHTS_CANONICALIZE)
+        mapping = provider.canonicalize_skills(display_labels, template=template)
+        # Keep only clean mappings for labels we sent.
+        return {
+            lbl: mapping[lbl].strip()
+            for lbl in display_labels
+            if isinstance(mapping.get(lbl), str) and mapping[lbl].strip()
+        }
+    except Exception:  # never let canonicalization break a refresh
+        log.exception("insights canonicalization failed; using deterministic grouping")
+        return {}
+
+
+def _build_items(
+    counts: Counter,
+    labels: dict[str, str],
+    severity: dict[str, str],
+    why: dict[str, str],
+    canonical_of: dict[str, str],
+) -> list[dict]:
+    """Fold the deterministic per-key aggregates into final ranked items, applying the AI
+    canonical grouping (by display label) on top. Counts sum across merged keys; severity
+    takes basic over average; the first non-empty why wins; the display name is the AI
+    canonical name when present, else the most common surface spelling."""
+    # Group deterministic keys by their canonical cluster name.
+    cluster_count: Counter[str] = Counter()
+    cluster_display: dict[str, str] = {}
+    cluster_severity: dict[str, str] = {}
+    cluster_why: dict[str, str] = {}
+
+    # Most-common order first so cluster display/why pick the dominant key's values.
+    for key, count in counts.most_common():
+        display = labels.get(key, key)
+        canonical = canonical_of.get(display, display)
+        cluster_key = canonical.casefold()
+
+        cluster_count[cluster_key] += count
+        cluster_display.setdefault(cluster_key, canonical)
+
+        sev = severity.get(key)
+        if sev and (
+            cluster_key not in cluster_severity
+            or (sev == "basic" and cluster_severity[cluster_key] != "basic")
+        ):
+            cluster_severity[cluster_key] = sev
+        if why.get(key) and cluster_key not in cluster_why:
+            cluster_why[cluster_key] = why[key]
+
+    return [
+        {
+            "skill": cluster_display[ck],
+            "count": count,
+            "severity": cluster_severity.get(ck),
+            "why": cluster_why.get(ck, ""),
+        }
+        for ck, count in cluster_count.most_common()
+    ]

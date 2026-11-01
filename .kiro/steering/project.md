@@ -34,17 +34,19 @@ don't add product features or abstractions beyond what a task needs.
   Production is Postgres via CloudNativePG.
 
 ## AI layer contract
-- Five editable prompts live in `ai/prompts.py`: `PROFILE`, `ANALYZE`, `APPLICATION`,
-  `APPLICATION_REVIEW`, and `APPLICATION_REVISE`. They are user-overridable via the API/UI
-  and validated against a strict placeholder allowlist. **Every prompt sent to the model is
-  editable on the `/prompts` page — do not hardcode a prompt in a provider.**
+- Six editable prompts live in `ai/prompts.py`: `PROFILE`, `ANALYZE`, `APPLICATION`,
+  `APPLICATION_REVIEW`, `APPLICATION_REVISE`, and `INSIGHTS_CANONICALIZE`. They are
+  user-overridable via the API/UI and validated against a strict placeholder allowlist.
+  **Every prompt sent to the model is editable on the `/prompts` page — do not hardcode a
+  prompt in a provider.**
   - `profile` allows only `{cv}`.
   - `analyze` allows only `{profile}`, `{cv}`, `{title}`, `{description}`.
   - `application` allows only `{profile}`, `{cv}`, `{title}`, `{description}`.
   - `application_review` allows only `{profile}`, `{cv}`, `{title}`, `{cover_letter}`,
-    `{cv_summary}`.
-  - `application_revise` allows only `{profile}`, `{cv}`, `{title}`, `{description}`,
-    `{critique}`, `{cover_letter}`, `{cv_summary}`.
+    `{cv_summary}`, `{cv_full}`.
+  - `application_revise` allows `{profile}`, `{cv}`, `{title}`, `{description}`,
+    `{critique}`, `{cover_letter}`, `{cv_summary}`, `{cv_full}`.
+  - `insights_canonicalize` allows only `{labels}` — clusters skill-gap labels for Insights.
   - Literal braces in a prompt (e.g. JSON examples) MUST be escaped as `{{` / `}}` or the
     validator rejects them as unknown placeholders.
 - Two providers behind `ai/base.py`'s `AIProvider` protocol: `StubProvider` (offline, no

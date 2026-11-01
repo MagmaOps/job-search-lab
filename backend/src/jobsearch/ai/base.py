@@ -146,3 +146,15 @@ class AIProvider(Protocol):
         revised draft plus the reviewer's critique.
         """
         ...
+
+    def canonicalize_skills(
+        self, labels: list[str], template: str | None = None
+    ) -> dict[str, str]:
+        """Cluster free-text skill labels under a canonical name for the Insights page.
+
+        Groups semantic duplicates (e.g. "Linux", "Linux (not evidenced)", "Linux-based
+        infrastructure operation" → "Linux"). Returns a mapping of EVERY input label to its
+        canonical name. Must not drop or invent labels; a label with no synonym maps to a
+        cleaned version of itself. Used only to merge counts — never changes grounding.
+        """
+        ...

@@ -1,3 +1,5 @@
+import itertools
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, update
@@ -16,9 +18,13 @@ def _seed_cv(db):
     return cv
 
 
+_JOB_SEQ = itertools.count(1)
+
+
 def _seed_analysis(db, cv_id, missing, learning_gaps=None, job_title="J"):
-    job = Job(source="remoteok", fingerprint="fp" + job_title + str(id(missing)),
-              title=job_title, content_hash="ch" + job_title + str(id(missing)))
+    n = next(_JOB_SEQ)  # guaranteed-unique per seeded job (fingerprint is UNIQUE)
+    job = Job(source="remoteok", fingerprint=f"fp{n}",
+              title=f"{job_title}{n}", content_hash=f"ch{n}")
     db.add(job)
     db.flush()
     db.add(Analysis(
@@ -167,3 +173,89 @@ def test_api_insights_flags_stale_cv(api_ctx):
 def test_api_refresh_without_cv_is_400(api_ctx):
     client, _ = api_ctx
     assert client.post("/insights/refresh").status_code == 400
+
+
+# ── AI semantic canonicalization (Part A) ───────────────────────────────────
+class _FakeProvider:
+    """Stands in for the AI provider: maps labels via a fixed canonical table."""
+
+    model = "fake"
+
+    def __init__(self, table):
+        self._table = table
+
+    def canonicalize_skills(self, labels, template=None):
+        # Return a mapping only for labels we know; unknown ones fall back to themselves.
+        return {lbl: self._table.get(lbl, lbl) for lbl in labels}
+
+
+def _patch_provider(monkeypatch, provider):
+    import jobsearch.services.insights_service as svc
+    monkeypatch.setattr(svc, "get_provider", lambda: provider)
+
+
+def test_ai_grouping_merges_semantic_variants(db, monkeypatch):
+    cv = _seed_cv(db)
+    # Three different surface forms of the same skill, each in a separate job.
+    _seed_analysis(db, cv.id, ["Linux"])
+    _seed_analysis(db, cv.id, ["Linux (not explicitly evidenced in CV)"])
+    _seed_analysis(db, cv.id, ["Linux-based infrastructure operation"])
+    _seed_analysis(db, cv.id, ["Terraform"])
+
+    # The deterministic layer keeps these as 3 distinct keys; the AI maps them to "Linux".
+    _patch_provider(monkeypatch, _FakeProvider({
+        "Linux": "Linux",
+        "Linux (not explicitly evidenced in CV)": "Linux",
+        "Linux-based infrastructure operation": "Linux",
+        "Terraform": "Terraform",
+    }))
+
+    snap = insights_service.refresh_insights(db)
+    by_skill = {i["skill"]: i["count"] for i in snap.items}
+    assert by_skill["Linux"] == 3           # three variants merged, counts summed
+    assert by_skill["Terraform"] == 1
+    assert snap.items[0]["skill"] == "Linux"  # most-asked ranks first
+
+
+def test_ai_grouping_preserves_severity_and_why_across_merge(db, monkeypatch):
+    cv = _seed_cv(db)
+    _seed_analysis(db, cv.id, ["Linux ops"],
+                   learning_gaps=[{"skill": "Linux ops", "level": "average", "why": "a"}])
+    _seed_analysis(db, cv.id, ["Linux"],
+                   learning_gaps=[{"skill": "Linux", "level": "basic", "why": "fundamental"}])
+    _patch_provider(monkeypatch, _FakeProvider({"Linux ops": "Linux", "Linux": "Linux"}))
+
+    snap = insights_service.refresh_insights(db)
+    linux = next(i for i in snap.items if i["skill"] == "Linux")
+    assert linux["count"] == 2
+    assert linux["severity"] == "basic"  # basic wins over average across the merge
+
+
+def test_ai_grouping_failure_falls_back_to_deterministic(db, monkeypatch):
+    cv = _seed_cv(db)
+    _seed_analysis(db, cv.id, ["Linux"])
+    _seed_analysis(db, cv.id, ["Linux-based infrastructure operation"])
+
+    class _Boom:
+        model = "boom"
+        def canonicalize_skills(self, labels, template=None):
+            raise RuntimeError("AI down")
+
+    _patch_provider(monkeypatch, _Boom())
+
+    # Must not raise; deterministic grouping stands (two distinct unmerged rows).
+    snap = insights_service.refresh_insights(db)
+    assert snap is not None
+    assert len(snap.items) == 2
+
+
+def test_insights_canonicalize_prompt_registered_and_valid():
+    from jobsearch.ai import prompts
+    assert prompts.INSIGHTS_CANONICALIZE in prompts.SPECS
+    prompts.validate(
+        prompts.INSIGHTS_CANONICALIZE, prompts.DEFAULT_INSIGHTS_CANONICALIZE_PROMPT
+    )
+    # Stub returns an identity map (no offline semantic grouping).
+    from jobsearch.ai.stub import StubProvider
+    m = StubProvider().canonicalize_skills(["Linux", "K8s"])
+    assert m == {"Linux": "Linux", "K8s": "K8s"}

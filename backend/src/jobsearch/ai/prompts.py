@@ -17,6 +17,7 @@ ANALYZE = "analyze"
 APPLICATION = "application"
 APPLICATION_REVIEW = "application_review"
 APPLICATION_REVISE = "application_revise"
+INSIGHTS_CANONICALIZE = "insights_canonicalize"
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,14 @@ SCORING — weighted average of these dimensions (0-100 each):
 Report requirements honestly: address every must-have — matched (in matching_skills) or
 gapped (in missing_requirements) — never silently omitted. Prefer the posting's own term
 over a synonym when deciding whether a skill matches.
+
+CLEAN SKILL NAMES (matching_skills, missing_requirements, learning_gaps):
+Each entry is the bare canonical skill or technology name ONLY — the term you would put on
+a CV. No qualifiers, no parentheticals, no commentary. Write "Linux", "Terraform",
+"Kubernetes" — never "Linux (not explicitly evidenced in CV)", "Terraform (nice-to-have)",
+or "Linux-based infrastructure operation". Use the shortest standard name for the skill so
+the same skill always reads identically across jobs. Put any nuance in the explanation, not
+in these lists.
 
 BE LACONIC — this is read by the candidate at a glance:
 Write explanation and every dimension reason as ONE short clause, not full sentences. No
@@ -342,6 +351,35 @@ Current full CV:
 """
 
 
+DEFAULT_INSIGHTS_CANONICALIZE_PROMPT = """You group a list of skill/technology labels so
+that semantic duplicates collapse to ONE canonical name, for a "skills I'm missing" report.
+
+You receive a list of raw labels (one per line), each a skill a job posting asked for. Many
+describe the SAME underlying skill in different words or with qualifiers, e.g.:
+- "Linux", "Linux (not explicitly evidenced in CV)", "Linux-based infrastructure operation"
+  → all map to "Linux".
+- "K8s", "Kubernetes orchestration" → "Kubernetes".
+- "CI/CD pipelines", "continuous integration" → "CI/CD".
+
+Rules:
+- Map EVERY input label to a canonical name. Do not drop any label and do not add labels
+  that were not in the input.
+- The canonical name is the shortest standard CV term for the skill, with no qualifiers or
+  parentheticals ("Linux", not "Linux (not evidenced)").
+- Only group labels that are genuinely the SAME skill. Do NOT merge distinct skills just
+  because they are related (e.g. "AWS" and "Azure" stay separate; "Docker" and "Kubernetes"
+  stay separate).
+- When a label is already clean and unique, map it to itself (optionally tidied).
+
+OUTPUT — return ONLY a JSON object mapping each exact input label to its canonical name:
+{{"<raw label>": "<canonical name>", ...}}
+Do not wrap the JSON in prose.
+
+Labels (one per line):
+{labels}
+"""
+
+
 SPECS: dict[str, PromptSpec] = {
     PROFILE: PromptSpec(
         key=PROFILE,
@@ -419,6 +457,18 @@ SPECS: dict[str, PromptSpec] = {
             }
         ),
         default=DEFAULT_APPLICATION_REVISE_PROMPT,
+    ),
+    INSIGHTS_CANONICALIZE: PromptSpec(
+        key=INSIGHTS_CANONICALIZE,
+        label="Insights skill grouping",
+        description=(
+            "Clusters free-text skill-gap labels under one canonical name for the Insights "
+            "page (e.g. 'Linux (not evidenced)' + 'Linux-based ops' → 'Linux'), merging "
+            "only genuine duplicates. Must return a JSON object mapping each input label to "
+            "its canonical name. Available placeholder: {labels}."
+        ),
+        required_placeholders=frozenset({"labels"}),
+        default=DEFAULT_INSIGHTS_CANONICALIZE_PROMPT,
     ),
 }
 
