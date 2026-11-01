@@ -35,10 +35,15 @@ class AnthropicProvider:
         text = "".join(
             block.text for block in msg.content if getattr(block, "type", "") == "text"
         ).strip()
-        # Be tolerant of code fences around the JSON.
+        # Be tolerant of code fences around the JSON. When the response is truncated
+        # mid-JSON (hit max_tokens), there may be no closing brace — don't eat the whole
+        # string trying to find one.
         if text.startswith("```"):
             text = text.strip("`")
-            text = text[text.find("{") : text.rfind("}") + 1]
+            start = text.find("{")
+            if start != -1:
+                end = text.rfind("}")
+                text = text[start:] if end == -1 else text[start : end + 1]
         try:
             return json.loads(text)
         except json.JSONDecodeError:
@@ -207,12 +212,14 @@ class AnthropicProvider:
         if not labels:
             return {}
         tmpl = template or prompts.DEFAULT_INSIGHTS_CANONICALIZE_PROMPT
-        # One label per line; the response is a small {label: canonical} object.
+        # The canonicalization response is a flat JSON object mapping each label to its
+        # canonical name. With many distinct gap labels (50+), the JSON can be substantial,
+        # so budget generously — truncation here produces unparseable JSON.
         data = self._complete_json(
             prompts.render(
                 prompts.INSIGHTS_CANONICALIZE, tmpl, labels="\n".join(labels)
             ),
-            max_tokens=2000,
+            max_tokens=8000,
         )
         # Keep only mappings for labels we actually sent, with non-empty canonical names;
         # any label the model omitted falls back to itself (handled by the caller).
