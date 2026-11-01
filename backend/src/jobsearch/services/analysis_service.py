@@ -56,7 +56,11 @@ def _with_guard_note(explanation: str | None, findings: list[str]) -> str | None
 
 
 def _pending_or_missing_job_ids(db: Session, cv_id: int, limit: int) -> list[int]:
-    """Jobs with no done analysis for this CV (and under the retry cap)."""
+    """Jobs with no done analysis for this CV (and under the retry cap).
+
+    Jobs whose description looks truncated are skipped: scoring a teaser gives a misleading
+    score, so they wait until the user pastes the full posting or marks it complete.
+    """
     done_subq = select(Analysis.job_id).where(
         Analysis.cv_id == cv_id,
         Analysis.processing_status == ProcessingStatus.done,
@@ -70,6 +74,7 @@ def _pending_or_missing_job_ids(db: Session, cv_id: int, limit: int) -> list[int
         select(Job.id)
         .where(Job.id.not_in(done_subq))
         .where(Job.id.not_in(exhausted_subq))
+        .where(Job.description_incomplete.isnot(True))
         .order_by(Job.discovered_at.desc())
         .limit(limit)
     ).all()

@@ -22,6 +22,8 @@ class JobOut(ORMModel):
     language: str | None
     salary: str | None = None
     work_type: str | None = None  # remote | hybrid | onsite | None
+    # Description looks truncated → held back from analysis until the user fixes it.
+    description_incomplete: bool = False
     status: str
     discovered_at: datetime
     # analysis freshness vs the active CV: current | outdated | none | error
@@ -54,6 +56,9 @@ class JobPatch(BaseModel):
     status: str | None = None  # new|saved|dismissed|applied|interview
     salary: str | None = None  # free-text salary range; "" clears it
     description: str | None = None  # paste the full posting text (replaces the stored one)
+    # Override the truncation heuristic: False = "this description is complete, analyze it";
+    # True = "this is cut off, hold it back from analysis".
+    description_incomplete: bool | None = None
 
 
 class JobDetailOut(ORMModel):
@@ -66,7 +71,9 @@ class JobDetailOut(ORMModel):
 
 
 class ManualJobIn(BaseModel):
-    url: str
+    """A job added by hand from the dashboard. Needs at least a URL or a title."""
+
+    url: str | None = None
     title: str | None = None
     company: str | None = None
     location: str | None = None

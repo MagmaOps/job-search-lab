@@ -33,9 +33,11 @@ export interface Job {
   language: string | null;
   salary: string | null;
   work_type: string | null; // remote | hybrid | onsite | null
+  // Description looks truncated → held back from analysis until you paste the full text.
+  description_incomplete: boolean;
   status: string;
   discovered_at: string;
-  analysis_state: "current" | "outdated" | "stale" | "none" | "error" | "pending";
+  analysis_state: "current" | "outdated" | "stale" | "none" | "error" | "pending" | "incomplete";
   application_state: "none" | "pending" | "done" | "error";
   match_score: number | null;
   translated_summary: string | null;
@@ -47,6 +49,16 @@ export interface Job {
   posting_country: string | null;
   eligibility: "worldwide" | "restricted" | "unclear" | null;
   eligibility_note: string | null;
+}
+
+export interface ManualJobIn {
+  url?: string;
+  title?: string;
+  company?: string;
+  location?: string;
+  description?: string;
+  salary?: string;
+  work_type?: string;
 }
 
 export interface Application {
@@ -162,8 +174,13 @@ export const api = {
   getJob: (id: number) => req<JobDetail>(`/jobs/${id}`),
   setJobDescription: (id: number, description: string) =>
     req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ description }) }),
+  setDescriptionIncomplete: (id: number, description_incomplete: boolean) =>
+    req<Job>(`/jobs/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ description_incomplete }),
+    }),
   reanalyze: (id: number) => req(`/jobs/${id}/reanalyze`, { method: "POST" }),
-  addManual: (body: Record<string, unknown>) =>
+  addManual: (body: ManualJobIn) =>
     req<Job>(`/jobs/manual`, { method: "POST", body: JSON.stringify(body) }),
 
   // Application generation (tailored cover letter + CV summary per job).

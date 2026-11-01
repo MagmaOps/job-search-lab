@@ -132,6 +132,11 @@ td .chip { white-space: nowrap; }
 .chip.app-error { background: rgba(248,81,73,0.16); color: var(--bad); }    /* failed */
 .chip.app-none  { background: var(--border); color: var(--muted); }         /* none   */
 
+/* Truncated-description marker: held back from analysis until the user pastes the full text. */
+.astate.incomplete { background: transparent; box-shadow: inset 0 0 0 2px var(--warn); } /* hollow amber */
+.chip.desc-incomplete { background: rgba(210,153,34,0.18); color: var(--warn); }
+.desc-incomplete-note { color: var(--warn); font-size: 13px; margin: 8px 0; }
+
 /* Gaps-to-close section (expanded job details): what to learn first. */
 .gaps { margin: 8px 0; }
 .gaps ul { margin: 6px 0 0; padding-left: 0; list-style: none; }

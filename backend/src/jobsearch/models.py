@@ -125,6 +125,14 @@ class Job(Base):
     salary: Mapped[str | None] = mapped_column(String(128))
     # Work arrangement: "remote" | "hybrid" | "onsite" | None (unknown).
     work_type: Mapped[str | None] = mapped_column(String(16), index=True)
+    # True when the stored description looks cut off (a feed teaser, "Read more…"). Such a
+    # job is NOT analyzed until the user pastes the full posting or marks it complete.
+    description_incomplete: Mapped[bool | None] = mapped_column(
+        Boolean, default=False, index=True
+    )
+    # True once the user supplied the description (manual job or pasted full text). Feed
+    # re-collection then never overwrites it with the source's (often truncated) copy.
+    description_manual: Mapped[bool] = mapped_column(Boolean, default=False)
 
     discovered_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     content_hash: Mapped[str] = mapped_column(String(64), index=True)

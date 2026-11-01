@@ -53,7 +53,7 @@ from .sources import source_names
 from .sources.base import normalize_work_type
 
 settings = get_settings()
-app = FastAPI(title="Job Search Lab", version="1.4.4")
+app = FastAPI(title="Job Search Lab", version="1.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -93,6 +93,7 @@ def list_jobs(
     status: str | None = None,
     has_salary: bool | None = None,
     has_application: bool | None = None,
+    description_incomplete: bool | None = None,
     sort: str = "score",
 ) -> list[JobOut]:
     cv_id = _active_cv_id(db)
@@ -141,6 +142,11 @@ def list_jobs(
         # "Has application" = an application row exists for the active CV (any status).
         app_present = Application.id.isnot(None)
         q = q.filter(app_present if has_application else ~app_present)
+    if description_incomplete is not None:
+        q = q.filter(
+            Job.description_incomplete.is_(True) if description_incomplete
+            else Job.description_incomplete.isnot(True)
+        )
 
     rows = q.all()
 
@@ -158,6 +164,9 @@ def list_jobs(
             state = "error"
         elif job.id in outdated_ids:
             state = "outdated"
+        elif job.description_incomplete:
+            # Held back from analysis until the user pastes the full description.
+            state = "incomplete"
         else:
             state = "none"
         # Application indicator vs the active CV: none | pending | done | error.
@@ -173,6 +182,7 @@ def list_jobs(
                 language=job.language,
                 salary=job.salary,
                 work_type=job.work_type,
+                description_incomplete=bool(job.description_incomplete),
                 status=job.status.value,
                 discovered_at=job.discovered_at,
                 analysis_state=state,
@@ -212,12 +222,14 @@ def get_job(job_id: int, db: Session = Depends(get_db)) -> Job:
 def update_job(
     job_id: int, body: JobPatch, db: Session = Depends(get_db)
 ) -> JobOut:
-    """Update a job's user-editable fields (status, salary, and/or description). Only the
-    fields present in the request are changed; sending salary="" clears a stored salary.
+    """Update a job's user-editable fields (status, salary, description, and the
+    incomplete-description flag). Only the fields present in the request are changed;
+    sending salary="" clears a stored salary.
 
-    Pasting a fuller `description` REPLACES the stored (often truncated) one. It does not
-    auto-re-analyze — it drops the current-CV analysis so the dashboard indicator flips to
-    "not current", prompting a manual Re-analyze against the fuller text when you choose."""
+    Pasting a fuller `description` REPLACES the stored (often truncated) one, clears the
+    incomplete flag, and protects the text from being overwritten by the next collection.
+    An existing score is marked stale (no auto-rescore); a job that was never scored
+    because its description was incomplete is picked up by the worker automatically."""
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(404, "Job not found")
@@ -235,6 +247,10 @@ def update_job(
         job.description = fields["description"]
         # Refresh the content hash so dedup/change-detection sees the new text.
         job.content_hash = content_hash(job.title, job.description)
+        # The user supplied this text: trust it as complete and never let a re-collected
+        # feed copy overwrite it.
+        job.description_manual = True
+        job.description_incomplete = not job.description.strip()
         # Mark the current-CV analysis stale rather than deleting it: the score stays
         # visible but flagged, and because the row is still `done` the background worker
         # will NOT silently re-score it. The user re-analyzes manually when ready.
@@ -243,57 +259,67 @@ def update_job(
             db.query(Analysis).filter(
                 Analysis.job_id == job.id, Analysis.cv_id == cv_id
             ).update({Analysis.stale: True})
+    elif fields.get("description_incomplete") is not None:
+        # Explicit override of the truncation heuristic (e.g. a short but complete posting).
+        job.description_incomplete = fields["description_incomplete"]
 
     db.commit()
     db.refresh(job)
+    return _job_out(job)
+
+
+def _job_out(job: Job, analysis_state: str = "none") -> JobOut:
+    """JobOut for a single job without its analysis fields (PATCH / manual-add replies)."""
     return JobOut(
         id=job.id, source=job.source, url=job.url, title=job.title,
         company=job.company, location=job.location, language=job.language,
         salary=job.salary, work_type=job.work_type,
+        description_incomplete=bool(job.description_incomplete),
         status=job.status.value, discovered_at=job.discovered_at,
+        analysis_state=analysis_state,
     )
 
 
 @app.post("/jobs/manual", response_model=JobOut, status_code=201)
 def add_manual_job(body: ManualJobIn, db: Session = Depends(get_db)) -> JobOut:
-    """Paste a job URL (e.g. from LinkedIn) to store + analyze it."""
-    norm = normalize_url(body.url)
+    """Add a job by hand (any board, incl. LinkedIn): URL and/or title, plus whatever
+    details you have. Queued for analysis when it has a description and a CV is active;
+    without a description it is flagged incomplete and waits for you to paste one."""
+    url = (body.url or "").strip() or None
+    title = (body.title or "").strip() or url
+    if not title:
+        raise HTTPException(422, "Give the job at least a title or a URL.")
+    norm = normalize_url(url)
     if norm and db.query(Job).filter(Job.normalized_url == norm).first():
         raise HTTPException(409, "A job with this URL already exists.")
-    title = body.title or body.url
+    fp = fingerprint("manual", body.company, title, body.location)
+    if db.query(Job).filter(Job.fingerprint == fp).first():
+        raise HTTPException(
+            409, "A manual job with this title, company and location already exists."
+        )
+    description = (body.description or "").strip() or None
     job = Job(
         source="manual",
-        url=body.url,
+        url=url,
         normalized_url=norm,
-        fingerprint=fingerprint("manual", body.company, title, body.location),
+        fingerprint=fp,
         title=title,
         company=body.company,
         location=body.location,
-        description=body.description,
+        description=description,
         salary=body.salary,
         work_type=normalize_work_type(body.work_type),
-        content_hash=content_hash(title, body.description),
+        content_hash=content_hash(title, description),
+        # You wrote this text deliberately, so only an empty description is "incomplete".
+        description_incomplete=description is None,
+        description_manual=description is not None,
     )
     db.add(job)
     db.commit()
     db.refresh(job)
-    analysis = analysis_service.analyze_single(db, job.id)
-    return JobOut(
-        id=job.id, source=job.source, url=job.url, title=job.title,
-        company=job.company, location=job.location, language=job.language,
-        salary=job.salary, work_type=job.work_type,
-        status=job.status.value, discovered_at=job.discovered_at,
-        match_score=analysis.match_score if analysis else None,
-        translated_summary=analysis.translated_summary if analysis else None,
-        explanation=analysis.explanation if analysis else None,
-        matching_skills=analysis.matching_skills if analysis else None,
-        missing_requirements=analysis.missing_requirements if analysis else None,
-        dimension_scores=analysis.dimension_scores if analysis else None,
-        learning_gaps=analysis.learning_gaps if analysis else None,
-        posting_country=analysis.posting_country if analysis else None,
-        eligibility=analysis.eligibility if analysis else None,
-        eligibility_note=analysis.eligibility_note if analysis else None,
-    )
+    # Queue rather than analyze in-request: the worker does the AI call, as everywhere else.
+    queued = not job.description_incomplete and analysis_service.enqueue_job(db, job.id)
+    return _job_out(job, "pending" if queued else "none")
 
 
 @app.post("/jobs/{job_id}/reanalyze")
@@ -301,6 +327,13 @@ def reanalyze(job_id: int, db: Session = Depends(get_db)) -> dict:
     """Queue a single job for re-analysis. Returns immediately; the worker does the work,
     so it completes even if the browser tab is closed. Poll /jobs to see it go
     pending → current."""
+    job = db.get(Job, job_id)
+    if job is not None and job.description_incomplete:
+        # The worker skips incomplete jobs, so a queued row would spin forever.
+        raise HTTPException(
+            409, "The description looks incomplete. Paste the full posting or mark it "
+                 "complete first.",
+        )
     ok = analysis_service.enqueue_job(db, job_id)
     if not ok:
         raise HTTPException(400, "No active CV or job not found.")

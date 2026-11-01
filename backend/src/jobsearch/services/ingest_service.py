@@ -5,10 +5,15 @@ Dedup strategy (design requirement 5):
 We look up an existing job by any of the three identities. If found and the content hash
 is unchanged, we skip. If the content changed, we update it and clear stale analyses so it
 is re-analyzed. If not found, we insert.
+
+A description the user supplied (manual job / pasted full text) is never overwritten by a
+re-collected feed copy, and a description that looks truncated is flagged so the job is
+held back from analysis until the user fixes it.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import or_
@@ -17,6 +22,26 @@ from sqlalchemy.orm import Session
 from ..dedup import content_hash, fingerprint, normalize_url
 from ..models import Analysis, Job
 from ..sources.base import RawJob
+
+# A real DevOps posting (responsibilities + requirements) runs well past this; anything
+# shorter from a feed is almost always a teaser. Scoring a teaser produces a misleading
+# score, so such jobs wait for the user to paste the full text.
+MIN_DESCRIPTION_CHARS = 700
+
+# Tails feeds append when they cut a description short.
+_TRUNCATION_TAIL = re.compile(
+    r"(\.\.\.|…|\[…\]|\[\.\.\.\]|read more|see more|show more|continue reading"
+    r"|view (?:the )?full (?:job|description|posting))\W*$",
+    re.IGNORECASE,
+)
+
+
+def looks_truncated(description: str | None) -> bool:
+    """Whether a feed description looks cut off: empty, too short, or ends in a teaser."""
+    text = (description or "").strip()
+    if len(text) < MIN_DESCRIPTION_CHARS:
+        return True
+    return bool(_TRUNCATION_TAIL.search(text[-80:]))
 
 
 @dataclass
@@ -61,11 +86,14 @@ def ingest_job(db: Session, raw: RawJob) -> str:
                 salary=raw.salary,
                 work_type=raw.work_type,
                 content_hash=chash,
+                description_incomplete=looks_truncated(raw.description),
             )
         )
         return "inserted"
 
-    if existing.content_hash == chash:
+    if existing.content_hash == chash or existing.description_manual:
+        # A user-supplied description always wins over the feed's copy (which is often the
+        # very teaser the user replaced), so a manually fixed job is treated as unchanged.
         # Known job, unchanged content → do not re-analyze (design requirement 5). Still
         # backfill salary/work_type if the source now provides what we were missing; these
         # are metadata, not content identity, so they don't trigger re-analysis.
@@ -84,6 +112,7 @@ def ingest_job(db: Session, raw: RawJob) -> str:
     existing.salary = raw.salary
     existing.work_type = raw.work_type
     existing.content_hash = chash
+    existing.description_incomplete = looks_truncated(raw.description)
     db.query(Analysis).filter(Analysis.job_id == existing.id).delete()
     return "updated"
 

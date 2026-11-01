@@ -13,6 +13,7 @@ from sqlalchemy import func, text
 from .config import get_settings
 from .db import SessionLocal, engine
 from .models import Base, SearchQuery
+from .services.ingest_service import looks_truncated
 
 # Serialize schema creation/seed so concurrent api+worker startup can't collide
 # (e.g. both trying to CREATE TYPE job_status at once).
@@ -103,7 +104,33 @@ _COLUMN_TOPUPS = (
     'ALTER TABLE analysis ADD COLUMN IF NOT EXISTS eligibility_note TEXT',
     'ALTER TABLE job ADD COLUMN IF NOT EXISTS salary VARCHAR(128)',
     'ALTER TABLE job ADD COLUMN IF NOT EXISTS work_type VARCHAR(16)',
+    # No DEFAULT on purpose: existing rows stay NULL so _backfill_description_flags can
+    # tell "never checked" from a user's explicit "complete" (False).
+    'ALTER TABLE job ADD COLUMN IF NOT EXISTS description_incomplete BOOLEAN',
+    'ALTER TABLE job ADD COLUMN IF NOT EXISTS description_manual BOOLEAN DEFAULT FALSE',
 )
+
+
+def _backfill_description_flags(conn) -> None:
+    """Flag truncated descriptions on jobs collected before the flag existed (NULL only).
+
+    Manual jobs are trusted unless empty — the user wrote that text deliberately.
+    Idempotent: once a row is set it is never revisited, so a user's override sticks.
+    """
+    rows = conn.execute(
+        text("SELECT id, source, description FROM job WHERE description_incomplete IS NULL")
+    ).all()
+    for job_id, source, description in rows:
+        if source == "manual":
+            incomplete = not (description or "").strip()
+        else:
+            incomplete = looks_truncated(description)
+        conn.execute(
+            text("UPDATE job SET description_incomplete = :v WHERE id = :id"),
+            {"v": incomplete, "id": job_id},
+        )
+    if rows:
+        log.info("checked %s existing job descriptions for truncation", len(rows))
 
 
 def create_tables() -> None:
@@ -118,6 +145,7 @@ def main() -> None:
         Base.metadata.create_all(bind=conn)
         for stmt in _COLUMN_TOPUPS:
             conn.execute(text(stmt))
+        _backfill_description_flags(conn)
     seed()
 
 

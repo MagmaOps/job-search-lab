@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { api, Application, Job, Status } from "@/lib/api";
+import { api, Application, Job, ManualJobIn, Status } from "@/lib/api";
 
 function scoreClass(s: number | null): string {
   if (s === null || s === undefined) return "na";
@@ -34,6 +34,7 @@ const ANALYSIS_STATE: Record<string, { cls: string; label: string }> = {
   error: { cls: "error", label: "Last analysis failed — try re-analyze" },
   none: { cls: "none", label: "Not analyzed against the current CV" },
   pending: { cls: "pending", label: "Queued — the worker is analyzing this job" },
+  incomplete: { cls: "incomplete", label: "Description looks truncated — not analyzed until you paste the full posting" },
 };
 
 // Application-generation indicator vs the active CV. Mirrors the analysis-state dot.
@@ -238,9 +239,13 @@ function ApplicationPanel({ jobId }: { jobId: number }) {
 
 function DescriptionEditor({
   jobId,
+  incomplete,
+  hasScore,
   onSaved,
 }: {
   jobId: number;
+  incomplete: boolean;
+  hasScore: boolean;
   onSaved: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -252,7 +257,7 @@ function DescriptionEditor({
 
   // Lazy-load the full description only when the editor is first opened — keeps the list
   // payload lean (descriptions can be large, and we edit one job at a time).
-  async function toggle() {
+  const toggle = useCallback(async () => {
     const next = !open;
     setOpen(next);
     if (next && !loaded) {
@@ -261,7 +266,13 @@ function DescriptionEditor({
       setOriginal(d.description ?? "");
       setLoaded(true);
     }
-  }
+  }, [open, loaded, jobId]);
+
+  // A truncated job's whole point is to be fixed here, so open the editor straight away.
+  useEffect(() => {
+    if (incomplete && !open && !loaded) toggle();
+    // Only on mount / when the job becomes incomplete — not on every toggle.
+  }, [incomplete]);
 
   async function save() {
     setBusy(true);
@@ -269,7 +280,11 @@ function DescriptionEditor({
     try {
       await api.setJobDescription(jobId, value);
       setOriginal(value);
-      setMsg("Saved. Re-analyze to score against the full text.");
+      setMsg(
+        hasScore
+          ? "Saved. Re-analyze to score against the full text."
+          : "Saved. The worker will analyze it shortly."
+      );
       onSaved(); // refresh the list so the analysis indicator flips to not-current
     } catch (e) {
       setMsg(String(e));
@@ -313,6 +328,92 @@ function DescriptionEditor({
   );
 }
 
+const EMPTY_MANUAL: ManualJobIn = {
+  title: "", url: "", company: "", location: "", work_type: "", salary: "", description: "",
+};
+
+function ManualJobForm({ onAdded }: { onAdded: (msg: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<ManualJobIn>(EMPTY_MANUAL);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const set = (k: keyof ManualJobIn) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+      setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit() {
+    setBusy(true);
+    setErr(null);
+    try {
+      // Send only the fields you filled in.
+      const body = Object.fromEntries(
+        Object.entries(form).filter(([, v]) => (v ?? "").trim() !== "")
+      ) as ManualJobIn;
+      const job = await api.addManual(body);
+      setForm(EMPTY_MANUAL);
+      setOpen(false);
+      onAdded(
+        job.description_incomplete
+          ? `Added "${job.title}". It has no description yet — paste one in Details to get it scored.`
+          : `Added "${job.title}" — queued for analysis.`
+      );
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button className="secondary" onClick={() => setOpen(true)}>
+        + Add job manually
+      </button>
+    );
+  }
+
+  const canSubmit = !!(form.title?.trim() || form.url?.trim());
+
+  return (
+    <div className="panel">
+      <strong>Add a job manually</strong>
+      <div className="row" style={{ marginTop: 8 }}>
+        <input placeholder="Title *" value={form.title} onChange={set("title")} style={{ minWidth: 240 }} />
+        <input placeholder="Company" value={form.company} onChange={set("company")} />
+        <input placeholder="Location" value={form.location} onChange={set("location")} />
+        <select value={form.work_type} onChange={set("work_type")}>
+          <option value="">Work type</option>
+          {WORK_TYPES.map((w) => <option key={w} value={w}>{WORK_TYPE_LABEL[w]}</option>)}
+        </select>
+        <input placeholder="Salary" value={form.salary} onChange={set("salary")} />
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
+        <input placeholder="Posting URL (optional)" value={form.url} onChange={set("url")}
+               style={{ flex: 1 }} />
+      </div>
+      <label style={{ marginTop: 8 }}>Full job description</label>
+      <textarea
+        value={form.description}
+        onChange={set("description")}
+        rows={10}
+        placeholder="Paste the complete posting. Without it, the job is saved but not scored."
+        style={{ width: "100%", fontFamily: "monospace", fontSize: 13 }}
+      />
+      {err && <div className="error detail">{err}</div>}
+      <div className="row" style={{ marginTop: 6 }}>
+        <button onClick={submit} disabled={!canSubmit || busy}>
+          {busy ? "Adding…" : "Add job"}
+        </button>
+        <button className="secondary" onClick={() => { setOpen(false); setErr(null); }}>
+          Cancel
+        </button>
+        <span className="muted" style={{ fontSize: 12 }}>A title or a URL is required.</span>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
@@ -330,6 +431,7 @@ export default function Dashboard() {
   const [statusFilter, setStatusFilter] = useState("");
   const [salaryFilter, setSalaryFilter] = useState(""); // "" | "yes" | "no"
   const [appFilter, setAppFilter] = useState(""); // "" | "yes" | "no"
+  const [descFilter, setDescFilter] = useState(""); // "" | "incomplete" | "complete"
 
   const load = useCallback(async () => {
     setErr(null);
@@ -344,6 +446,7 @@ export default function Dashboard() {
       if (statusFilter) params.status = statusFilter;
       if (salaryFilter) params.has_salary = salaryFilter === "yes" ? "true" : "false";
       if (appFilter) params.has_application = appFilter === "yes" ? "true" : "false";
+      if (descFilter) params.description_incomplete = descFilter === "incomplete" ? "true" : "false";
       const [j, s] = await Promise.all([api.jobs(params), api.status()]);
       setJobs(j);
       setStatus(s);
@@ -351,7 +454,9 @@ export default function Dashboard() {
       setErr(String(e));
     }
   }, [minScore, location, company, language, workType, eligibility, statusFilter,
-      salaryFilter, appFilter]);
+      salaryFilter, appFilter, descFilter]);
+
+  const incompleteCount = jobs.filter((j) => j.description_incomplete).length;
 
   useEffect(() => {
     load();
@@ -411,6 +516,15 @@ export default function Dashboard() {
     }
   }
 
+  async function setDescriptionIncomplete(id: number, value: boolean) {
+    try {
+      await api.setDescriptionIncomplete(id, value);
+      await load();
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
   async function reanalyze(id: number) {
     // Optimistically show the spinner immediately; the worker does the actual analysis, so
     // it completes even if this tab is closed. Polling will flip it to a score when done.
@@ -453,6 +567,17 @@ export default function Dashboard() {
             {status.errors.length} source error(s) in last run.
           </div>
         )}
+        {incompleteCount > 0 && descFilter !== "incomplete" && (
+          <div className="detail" style={{ marginTop: 6 }}>
+            <span className="chip desc-incomplete">⚠ {incompleteCount} job(s) need a full description</span>{" "}
+            <button className="secondary" onClick={() => setDescFilter("incomplete")}>
+              Show them
+            </button>
+          </div>
+        )}
+        <div style={{ marginTop: 8 }}>
+          <ManualJobForm onAdded={(m) => { setMsg(m); load(); }} />
+        </div>
       </div>
 
       <div className="panel filters">
@@ -488,6 +613,12 @@ export default function Dashboard() {
             <option value="">Any application</option>
             <option value="yes">Has application</option>
             <option value="no">No application</option>
+          </select>
+          <select value={descFilter} onChange={(e) => setDescFilter(e.target.value)}
+                  title="Filter by whether the description looks truncated">
+            <option value="">Any description</option>
+            <option value="incomplete">Needs full description</option>
+            <option value="complete">Description complete</option>
           </select>
           <button className="secondary" onClick={load}>Apply</button>
         </div>
@@ -533,7 +664,19 @@ export default function Dashboard() {
                   </td>
                   <td>
                     {j.url ? <a href={j.url} target="_blank" rel="noreferrer">{j.title}</a> : j.title}
-                    <div className="muted" style={{ fontSize: 12 }}>{j.source}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {j.source}
+                      {j.description_incomplete && (
+                        <span
+                          className="chip desc-incomplete"
+                          title={ANALYSIS_STATE.incomplete.label}
+                          onClick={() => setExpanded(j.id)}
+                          style={{ cursor: "pointer", marginLeft: 6 }}
+                        >
+                          ⚠ needs full description
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td>{j.company || "—"}</td>
                   <td>{j.location || "—"}</td>
@@ -646,11 +789,32 @@ export default function Dashboard() {
                       <div className="row" style={{ marginBottom: 10 }}>
                         <SalaryEditor job={j} onSave={saveSalary} />
                       </div>
-                      <DescriptionEditor jobId={j.id} onSaved={load} />
-                      <button className="secondary" onClick={() => reanalyze(j.id)}
-                              disabled={j.analysis_state === "pending"}>
-                        {j.analysis_state === "pending" ? "Analyzing…" : "Re-analyze"}
-                      </button>
+                      {j.description_incomplete && (
+                        <p className="desc-incomplete-note">
+                          ⚠ This description looks truncated, so the job is not scored. Paste
+                          the complete posting below — or, if it really is complete, mark it so.
+                        </p>
+                      )}
+                      <DescriptionEditor
+                        jobId={j.id}
+                        incomplete={j.description_incomplete}
+                        hasScore={j.match_score !== null}
+                        onSaved={load}
+                      />
+                      <div className="row" style={{ marginTop: 6 }}>
+                        <button className="secondary" onClick={() => reanalyze(j.id)}
+                                disabled={j.analysis_state === "pending" || j.description_incomplete}
+                                title={j.description_incomplete ? "Fix the description first" : ""}>
+                          {j.analysis_state === "pending" ? "Analyzing…" : "Re-analyze"}
+                        </button>
+                        <button className="secondary"
+                                onClick={() => setDescriptionIncomplete(j.id, !j.description_incomplete)}
+                                title={j.description_incomplete
+                                  ? "The description is short but complete — allow it to be scored"
+                                  : "The description is cut off — hold it back from scoring"}>
+                          {j.description_incomplete ? "Mark description complete" : "Mark description incomplete"}
+                        </button>
+                      </div>
                       <hr style={{ margin: "14px 0", border: "none", borderTop: "1px solid #e5e7eb" }} />
                       <ApplicationPanel jobId={j.id} />
                     </td>
