@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import AppVersion from "./AppVersion";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/queries">Queries</Link>
             <Link href="/prompts">Prompts</Link>
           </nav>
+          <AppVersion />
         </header>
         <main className="container">{children}</main>
       </body>

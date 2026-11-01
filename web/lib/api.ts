@@ -197,6 +197,7 @@ export const api = {
   analyze: () => req<{ queued: number }>(`/analyze`, { method: "POST" }),
 
   status: () => req<Status>(`/status`),
+  version: () => req<{ version: string }>(`/version`),
 
   queries: () => req<Query[]>(`/queries`),
   createQuery: (body: Record<string, unknown>) =>

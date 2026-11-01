@@ -53,7 +53,7 @@ from .sources import source_names
 from .sources.base import normalize_work_type
 
 settings = get_settings()
-app = FastAPI(title="Job Search Lab", version="1.5.0")
+app = FastAPI(title="Job Search Lab", version="1.5.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,6 +67,12 @@ app.add_middleware(
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/version")
+def version() -> dict:
+    """The running backend's release version (shown in the web header)."""
+    return {"version": app.version}
 
 
 @app.get("/readyz")
