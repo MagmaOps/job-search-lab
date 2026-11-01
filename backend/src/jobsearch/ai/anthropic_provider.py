@@ -35,15 +35,12 @@ class AnthropicProvider:
         text = "".join(
             block.text for block in msg.content if getattr(block, "type", "") == "text"
         ).strip()
-        # Be tolerant of code fences around the JSON. When the response is truncated
-        # mid-JSON (hit max_tokens), there may be no closing brace — don't eat the whole
-        # string trying to find one.
-        if text.startswith("```"):
-            text = text.strip("`")
-            start = text.find("{")
-            if start != -1:
-                end = text.rfind("}")
-                text = text[start:] if end == -1 else text[start : end + 1]
+        # Extract the JSON object, tolerating code fences AND leading/trailing prose.
+        # When the response is truncated (hit max_tokens), there may be no closing brace.
+        start = text.find("{")
+        if start != -1:
+            end = text.rfind("}")
+            text = text[start:] if end == -1 or end < start else text[start : end + 1]
         try:
             return json.loads(text)
         except json.JSONDecodeError:
@@ -212,22 +209,27 @@ class AnthropicProvider:
         if not labels:
             return {}
         tmpl = template or prompts.DEFAULT_INSIGHTS_CANONICALIZE_PROMPT
-        # The canonicalization response is a flat JSON object mapping each label to its
-        # canonical name. With many distinct gap labels (50+), the JSON can be substantial,
-        # so budget generously — truncation here produces unparseable JSON.
-        data = self._complete_json(
-            prompts.render(
-                prompts.INSIGHTS_CANONICALIZE, tmpl, labels="\n".join(labels)
-            ),
-            max_tokens=8000,
-        )
-        # Keep only mappings for labels we actually sent, with non-empty canonical names;
-        # any label the model omitted falls back to itself (handled by the caller).
         out: dict[str, str] = {}
-        for label in labels:
-            canonical = data.get(label)
-            if isinstance(canonical, str) and canonical.strip():
-                out[label] = canonical.strip()
+
+        # Batch labels so each AI call's JSON response stays small and never truncates.
+        # 236 distinct labels in one call can produce a JSON object too large for the token
+        # budget; chunks of 40 keep each call fast and well within limits. Sort first so
+        # semantic variants (all "Linux..." labels) land in the same batch and the model
+        # can actually see they're duplicates.
+        BATCH = 40
+        sorted_labels = sorted(labels, key=str.casefold)
+        for i in range(0, len(sorted_labels), BATCH):
+            batch = sorted_labels[i : i + BATCH]
+            data = self._complete_json(
+                prompts.render(
+                    prompts.INSIGHTS_CANONICALIZE, tmpl, labels="\n".join(batch)
+                ),
+                max_tokens=4000,
+            )
+            for label in batch:
+                canonical = data.get(label)
+                if isinstance(canonical, str) and canonical.strip():
+                    out[label] = canonical.strip()
         return out
 
 
