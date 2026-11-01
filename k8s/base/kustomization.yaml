@@ -22,10 +22,10 @@ resources:
 images:
   - name: jobsearch-backend
     newName: magmakomer/jobsearch-backend
-    newTag: v1.4.1
+    newTag: v1.4.2
   - name: jobsearch-web
     newName: magmakomer/jobsearch-web
-    newTag: v1.4.1
+    newTag: v1.4.2
 
 # Add the part-of label as metadata only. includeSelectors MUST stay false: Argo Rollouts
 # manages the blue-green Service selectors itself and validates them against the Rollout's
