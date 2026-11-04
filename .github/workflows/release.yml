@@ -1,0 +1,26 @@
+# .github/workflows/release.yml
+#
+# Pushing a vX.Y.Z tag (see CLAUDE.md release steps) validates, then publishes
+# both images to Docker Hub. Replaces running ./build-push.sh by hand.
+
+name: Release images
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  validate:
+    uses: MagmaOps/k3s-lab-ci/.github/workflows/job-search-lab-validate.yaml@main
+    with:
+      ref: ${{ github.sha }}
+    secrets: inherit
+
+  publish:
+    needs: validate
+    uses: MagmaOps/k3s-lab-ci/.github/workflows/job-search-lab-publish.yaml@main
+    with:
+      ref: ${{ github.sha }}
+      version: ${{ github.ref_name }}
+    secrets: inherit

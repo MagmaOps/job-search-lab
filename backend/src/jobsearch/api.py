@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from .ai import prompts
 from .config import get_settings
 from .db import get_db
 from .dedup import content_hash, fingerprint, normalize_url
@@ -40,7 +39,6 @@ from .schemas import (
     QueryUpdate,
     StatusOut,
 )
-from .ai import prompts
 from .services import (
     analysis_service,
     application_service,
@@ -53,7 +51,7 @@ from .sources import source_names
 from .sources.base import normalize_work_type
 
 settings = get_settings()
-app = FastAPI(title="Job Search Lab", version="1.5.1")
+app = FastAPI(title="Job Search Lab", version="1.5.2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -206,7 +204,6 @@ def list_jobs(
             )
         )
 
-    reverse = True
     if sort == "date":
         out.sort(key=lambda j: j.discovered_at, reverse=True)
     else:  # score, None last

@@ -1,6 +1,6 @@
-from jobsearch.models import CV, Analysis, Job, MatchingProfile, ProcessingStatus
 from sqlalchemy import update
 
+from jobsearch.models import CV, Analysis, Job, MatchingProfile, ProcessingStatus
 from jobsearch.services import analysis_service
 
 

@@ -1,0 +1,21 @@
+# .github/workflows/main-pr.yml
+
+name: Main pr validate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+
+# Cancel an in-flight validation when the PR gets new commits.
+concurrency:
+  group: job-search-lab-validate-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  job-search-ci:
+    uses: MagmaOps/k3s-lab-ci/.github/workflows/job-search-lab-validate.yaml@main
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+    secrets: inherit

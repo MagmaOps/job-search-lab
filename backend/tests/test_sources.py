@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from jobsearch.sources import get_source, source_names
 from jobsearch.sources.base import format_salary, normalize_work_type
 from jobsearch.sources.rss import RssSource
@@ -57,8 +59,5 @@ def test_rss_parser_splits_company_and_strips_html():
 
 
 def test_get_source_unknown_raises():
-    try:
+    with pytest.raises(KeyError):
         get_source("does-not-exist")
-        assert False, "expected KeyError"
-    except KeyError:
-        pass
