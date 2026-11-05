@@ -132,6 +132,10 @@ class Job(Base):
     # True once the user supplied the description (manual job or pasted full text). Feed
     # re-collection then never overwrites it with the source's (often truncated) copy.
     description_manual: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Soft delete: the user dismissed this job (gone from the web / not relevant). The row
+    # stays so re-collection dedups against it instead of re-adding it; it is hidden from
+    # the dashboard and skipped by analysis until restored.
+    removed: Mapped[bool | None] = mapped_column(Boolean, default=False, index=True)
 
     discovered_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     content_hash: Mapped[str] = mapped_column(String(64), index=True)

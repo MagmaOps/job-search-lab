@@ -24,6 +24,7 @@ class JobOut(ORMModel):
     work_type: str | None = None  # remote | hybrid | onsite | None
     # Description looks truncated → held back from analysis until the user fixes it.
     description_incomplete: bool = False
+    removed: bool = False
     status: str
     discovered_at: datetime
     # analysis freshness vs the active CV: current | outdated | none | error
@@ -59,6 +60,8 @@ class JobPatch(BaseModel):
     # Override the truncation heuristic: False = "this description is complete, analyze it";
     # True = "this is cut off, hold it back from analysis".
     description_incomplete: bool | None = None
+    # Soft-delete / restore: hides the job from the dashboard without deleting the row.
+    removed: bool | None = None
 
 
 class JobDetailOut(ORMModel):
@@ -204,5 +207,6 @@ class StatusOut(BaseModel):
     jobs_total: int
     jobs_new: int
     jobs_analyzed: int
+    jobs_removed: int = 0
     errors: list
     ai_enabled: bool

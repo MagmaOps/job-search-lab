@@ -98,6 +98,8 @@ def list_jobs(
     has_salary: bool | None = None,
     has_application: bool | None = None,
     description_incomplete: bool | None = None,
+    source: str | None = None,
+    removed: bool = False,
     sort: str = "score",
 ) -> list[JobOut]:
     cv_id = _active_cv_id(db)
@@ -124,6 +126,10 @@ def list_jobs(
             .distinct()
         ).all()
         outdated_ids = {r[0] for r in rows_other}
+    # Removed jobs are hidden unless the caller asks for exactly those (the review view).
+    q = q.filter(Job.removed.is_(True) if removed else Job.removed.isnot(True))
+    if source:
+        q = q.filter(Job.source == source)
     if location:
         q = q.filter(Job.location.ilike(f"%{location}%"))
     if company:
@@ -187,6 +193,7 @@ def list_jobs(
                 salary=job.salary,
                 work_type=job.work_type,
                 description_incomplete=bool(job.description_incomplete),
+                removed=bool(job.removed),
                 status=job.status.value,
                 discovered_at=job.discovered_at,
                 analysis_state=state,
@@ -209,6 +216,14 @@ def list_jobs(
     else:  # score, None last
         out.sort(key=lambda j: (j.match_score is None, -(j.match_score or 0)))
     return out
+
+
+@app.get("/jobs/sources", response_model=list[str])
+def list_job_sources(db: Session = Depends(get_db)) -> list[str]:
+    """Distinct sources present in the jobs table (feeds the dashboard source filter).
+    Declared before /jobs/{job_id} so 'sources' is not parsed as an id."""
+    rows = db.execute(select(Job.source).distinct().order_by(Job.source)).all()
+    return [r[0] for r in rows]
 
 
 @app.get("/jobs/{job_id}", response_model=JobDetailOut)
@@ -266,6 +281,9 @@ def update_job(
         # Explicit override of the truncation heuristic (e.g. a short but complete posting).
         job.description_incomplete = fields["description_incomplete"]
 
+    if fields.get("removed") is not None:
+        job.removed = fields["removed"]
+
     db.commit()
     db.refresh(job)
     return _job_out(job)
@@ -278,6 +296,7 @@ def _job_out(job: Job, analysis_state: str = "none") -> JobOut:
         company=job.company, location=job.location, language=job.language,
         salary=job.salary, work_type=job.work_type,
         description_incomplete=bool(job.description_incomplete),
+        removed=bool(job.removed),
         status=job.status.value, discovered_at=job.discovered_at,
         analysis_state=analysis_state,
     )
@@ -580,13 +599,20 @@ def clear_insights(db: Session = Depends(get_db)) -> None:
 @app.get("/status", response_model=StatusOut)
 def status(db: Session = Depends(get_db)) -> StatusOut:
     run = collect_service.last_run(db)
-    jobs_total = db.query(func.count(Job.id)).scalar() or 0
+    # Totals describe the visible dashboard; removed jobs are counted separately.
+    visible = Job.removed.isnot(True)
+    jobs_total = db.query(func.count(Job.id)).filter(visible).scalar() or 0
+    jobs_removed = db.query(func.count(Job.id)).filter(Job.removed.is_(True)).scalar() or 0
     jobs_new = (
-        db.query(func.count(Job.id)).filter(Job.status == JobStatus.new).scalar() or 0
+        db.query(func.count(Job.id))
+        .filter(visible, Job.status == JobStatus.new)
+        .scalar()
+        or 0
     )
     analyzed = (
         db.query(func.count(Analysis.id))
-        .filter(Analysis.processing_status == ProcessingStatus.done)
+        .join(Job, Job.id == Analysis.job_id)
+        .filter(visible, Analysis.processing_status == ProcessingStatus.done)
         .scalar()
         or 0
     )
@@ -596,6 +622,7 @@ def status(db: Session = Depends(get_db)) -> StatusOut:
         jobs_total=jobs_total,
         jobs_new=jobs_new,
         jobs_analyzed=analyzed,
+        jobs_removed=jobs_removed,
         errors=(run.errors if run and run.errors else []),
         ai_enabled=settings.ai_enabled,
     )

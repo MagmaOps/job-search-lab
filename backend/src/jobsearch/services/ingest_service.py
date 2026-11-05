@@ -26,7 +26,7 @@ from ..sources.base import RawJob
 # A real DevOps posting (responsibilities + requirements) runs well past this; anything
 # shorter from a feed is almost always a teaser. Scoring a teaser produces a misleading
 # score, so such jobs wait for the user to paste the full text.
-MIN_DESCRIPTION_CHARS = 700
+MIN_DESCRIPTION_CHARS = 1500
 
 # Tails feeds append when they cut a description short.
 _TRUNCATION_TAIL = re.compile(
