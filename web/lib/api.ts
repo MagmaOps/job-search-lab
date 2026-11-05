@@ -35,6 +35,7 @@ export interface Job {
   work_type: string | null; // remote | hybrid | onsite | null
   // Description looks truncated → held back from analysis until you paste the full text.
   description_incomplete: boolean;
+  removed: boolean; // hidden from the dashboard; kept in the DB until restored
   status: string;
   discovered_at: string;
   analysis_state: "current" | "outdated" | "stale" | "none" | "error" | "pending" | "incomplete";
@@ -92,6 +93,7 @@ export interface Status {
   jobs_total: number;
   jobs_new: number;
   jobs_analyzed: number;
+  jobs_removed: number;
   errors: unknown[];
   ai_enabled: boolean;
 }
@@ -171,6 +173,9 @@ export const api = {
     req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   setJobSalary: (id: number, salary: string) =>
     req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ salary }) }),
+  jobSources: () => req<string[]>(`/jobs/sources`),
+  setJobRemoved: (id: number, removed: boolean) =>
+    req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ removed }) }),
   getJob: (id: number) => req<JobDetail>(`/jobs/${id}`),
   setJobDescription: (id: number, description: string) =>
     req<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ description }) }),

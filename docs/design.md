@@ -135,6 +135,7 @@ job
   discovered_at, content_hash,   -- to detect "changed" jobs
   description_incomplete, -- looks truncated → not analyzed until the user fixes it
   description_manual,     -- user-supplied text; re-collection never overwrites it
+  removed,                -- soft delete: hidden from dashboard, skipped by analysis, restorable
   status,                 -- new | saved | dismissed | applied | interview
   created_at, updated_at
   UNIQUE (normalized_url)
@@ -187,7 +188,7 @@ insights                   -- persisted skill-gap snapshot (see §6); user-drive
   `(job_id, new_cv_id)` analysis (queued, not forced, unless manually requested).
 - Manual re-analysis endpoint forces a new run regardless of cache.
 - **Truncated descriptions are not scored.** At ingest, a description that is empty, under
-  ~700 chars, or ends in a teaser ("…", "Read more") sets `job.description_incomplete`;
+  ~1500 chars, or ends in a teaser ("…", "Read more") sets `job.description_incomplete`;
   the analysis queue skips such jobs. Pasting the full text (or "Mark description complete")
   clears it and the worker scores the job. A user-supplied description sets
   `description_manual`, and re-collection then treats the job as unchanged instead of
@@ -306,9 +307,11 @@ Pages:
 Ingress strips the `/api` prefix, so routes are root-level.
 ```
 GET    /jobs?min_score&location&company&language&work_type&eligibility&status
-                &has_salary&has_application&sort
+                &has_salary&has_application&source&removed&sort
+                (removed=true → only removed jobs; default hides them)
+GET    /jobs/sources              (distinct sources, for the dashboard source filter)
 GET    /jobs/{id}                 (full single job incl. description; lazy-loaded on edit)
-PATCH  /jobs/{id}                 (status / salary / description; description edit → stale)
+PATCH  /jobs/{id}                 (status / salary / description / removed; description edit → stale)
 POST   /jobs/manual               (add a job by hand: URL and/or title + details → queue analysis)
 POST   /jobs/{id}/reanalyze       (queue a fresh analysis)
 GET    /jobs/{id}/application     (current tailored application for the active CV)

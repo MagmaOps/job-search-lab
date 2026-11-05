@@ -75,6 +75,7 @@ def _pending_or_missing_job_ids(db: Session, cv_id: int, limit: int) -> list[int
         .where(Job.id.not_in(done_subq))
         .where(Job.id.not_in(exhausted_subq))
         .where(Job.description_incomplete.isnot(True))
+        .where(Job.removed.isnot(True))
         .order_by(Job.discovered_at.desc())
         .limit(limit)
     ).all()

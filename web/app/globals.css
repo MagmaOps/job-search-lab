@@ -183,3 +183,4 @@ td .chip { white-space: nowrap; }
 
 /* The "pending" freshness state reuses the accent as a faint pulsing dot. */
 .astate.pending { background: var(--accent); }
+button.linklike { background: none; border: none; padding: 0; color: var(--text); text-decoration: underline; cursor: pointer; font: inherit; }

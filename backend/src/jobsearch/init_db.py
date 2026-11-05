@@ -108,6 +108,7 @@ _COLUMN_TOPUPS = (
     # tell "never checked" from a user's explicit "complete" (False).
     'ALTER TABLE job ADD COLUMN IF NOT EXISTS description_incomplete BOOLEAN',
     'ALTER TABLE job ADD COLUMN IF NOT EXISTS description_manual BOOLEAN DEFAULT FALSE',
+    'ALTER TABLE job ADD COLUMN IF NOT EXISTS removed BOOLEAN DEFAULT FALSE',
 )
 
 

@@ -11,7 +11,7 @@ from jobsearch.services import analysis_service
 from jobsearch.services.ingest_service import ingest_job, looks_truncated
 from jobsearch.sources.base import RawJob
 
-FULL = "We run kubernetes and terraform on aws. " * 30  # ~1200 chars, a real posting
+FULL = "We run kubernetes and terraform on aws. " * 45  # ~1800 chars, a real posting
 
 
 def _raw(**kw) -> RawJob:
