@@ -37,7 +37,8 @@ Here is every "Unique to ai-job-search" feature and the decision for each:
 | Tailored CV + cover letter per job | **BUILD NOW** | The one gap that changes outcomes: turns "50 ranked jobs" into "a sendable application". All the upstream collect/dedup/rank work only pays off if you then apply well. |
 | Drafter → reviewer loop | **BUILD NOW** | Cheap quality multiplier on the above; catches missed keywords, weak framing, and ungrounded claims. Part of the same stage. |
 | Prompt-injection hardening | **DONE** | Already shipped as `ai/posting_guard.py`; just reuse it. |
-| PDF compile + layout verification | **LATER (next)** | You'll need a real PDF to submit — but prove the *content* is good in Markdown first. Add when you actually need to send a PDF, as its own task. |
+| Full tailored CV (all sections, Markdown) | **DONE** | Added `cv_full_md` to the generator (draft→review→revise, grounded). A complete submittable CV in clean Markdown, user-editable. |
+| PDF compile + layout verification | **NOT BUILT (by choice)** | User renders the Markdown CV to PDF themselves. Server-side PDF/LaTeX was deliberately skipped to avoid bloating the backend image — Markdown output is kept clean/PDF-ready instead. |
 | Interview prep + mock (`/interview`) | **LATER** | Genuinely useful, but worthless until applications land interviews. Correctly sequenced *after* this stage. Don't build speculatively. |
 | Outcome tracking + follow-ups | **LATER / maybe never** | A spreadsheet covers it for one person's search. Only if the search drags on. |
 | ATS text-layer check | **PROBABLY NEVER** | Matters for big-corp ATS funnels; polish for targeted DevOps applications. Revisit only if auto-rejections appear. |

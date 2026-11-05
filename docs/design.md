@@ -9,7 +9,7 @@
 
 | Topic | Decision |
 |-------|----------|
-| AI provider | **Anthropic** (Claude). Configurable via env; key stays server-side. Not wired up yet — code behind an interface so it can run with a stub until the key is added. |
+| AI provider | **Anthropic** (Claude), shipped and working. Configurable via env; key stays server-side. All model access is behind the `AIProvider` interface, with a deterministic `StubProvider` for keyless/offline runs and tests. Swapping to another vendor is a contained, one-new-file change — see `docs/ai-provider-swap.md`. |
 | Automated sources | **RSS feeds + free JSON APIs only** (compliant, no auth, no scraping). |
 | LinkedIn | **Manual reference only.** Stored as a bookmarkable search URL + manual job-URL entry. The app never auto-polls LinkedIn (its guest/voyager endpoints violate ToS and the task's anti-bot rule). |
 | Primary query | **DevOps Engineer, remote, EU-based candidates.** |
@@ -47,6 +47,10 @@ https://www.linkedin.com/jobs/search/?keywords=DevOps%20Engineer&location=Europe
 | RemoteOK | `https://remoteok.com/api?tag=devops` | JSON; needs `User-Agent` header; first array item is a legal notice; attribution required |
 | Remotive | `https://remotive.com/api/remote-jobs?category=devops` | JSON |
 | Arbeitnow | `https://www.arbeitnow.com/api/job-board-api` | JSON; EU-friendly board |
+| Freehire | free JSON board | JSON; EU/remote filtering |
+
+Registered source keys (self-registering in `sources/__init__.py`): `rss`, `remoteok`,
+`remotive`, `arbeitnow`, `freehire`. `linkedin` is a non-fetchable manual-reference source.
 
 ## 2. Architecture
 
@@ -129,6 +133,8 @@ job
   fingerprint,            -- fallback dedup: hash(source,company,title,location)
   title, company, location, description, language,
   discovered_at, content_hash,   -- to detect "changed" jobs
+  description_incomplete, -- looks truncated → not analyzed until the user fixes it
+  description_manual,     -- user-supplied text; re-collection never overwrites it
   status,                 -- new | saved | dismissed | applied | interview
   created_at, updated_at
   UNIQUE (normalized_url)
@@ -157,6 +163,12 @@ application                -- tailored CV + cover letter per job (see §5a)
   reviewer_notes,          -- the drafter→reviewer critique, for transparency
   model, created_at, updated_at
   UNIQUE (job_id, cv_id)   -- one current application per job per CV version
+
+insights                   -- persisted skill-gap snapshot (see §6); user-driven, one row
+  id, cv_id,               -- which CV it was computed against (flags "stale" when changed)
+  jobs_analyzed,           -- how many done analyses fed it
+  items (jsonb),           -- ranked [{skill, count, severity: basic|average|null, why}]
+  computed_at              -- refresh overwrites; nothing auto-deletes it
 ```
 
 ### Deduplication (task requirement 5)
@@ -174,6 +186,12 @@ application                -- tailored CV + cover letter per job (see §5a)
 - **CV changes** → new `cv` row becomes active → existing jobs become eligible for a fresh
   `(job_id, new_cv_id)` analysis (queued, not forced, unless manually requested).
 - Manual re-analysis endpoint forces a new run regardless of cache.
+- **Truncated descriptions are not scored.** At ingest, a description that is empty, under
+  ~700 chars, or ends in a teaser ("…", "Read more") sets `job.description_incomplete`;
+  the analysis queue skips such jobs. Pasting the full text (or "Mark description complete")
+  clears it and the worker scores the job. A user-supplied description sets
+  `description_manual`, and re-collection then treats the job as unchanged instead of
+  overwriting the pasted text with the feed's teaser.
 - Failures stored with `processing_status=error`, `error_message`, `retry_count` for retry.
 
 ## 4. CV ingestion & matching profile (requirement 2 & 6, option c)
@@ -186,15 +204,31 @@ application                -- tailored CV + cover letter per job (see §5a)
   explicit overrides.
 
 ## 5. AI matching & translation (requirement 6)
-- `AIProvider` interface; `AnthropicProvider` implementation + `StubProvider` for local
-  dev before the key exists.
-- Pipeline per job: detect language → (if non-English) translate relevant fields →
-  validate the description against the **effective matching profile** → produce
-  `match_score (0-100)`, `explanation`, `matching_skills`, `missing_requirements`.
+- `AIProvider` interface (`ai/base.py`); `AnthropicProvider` + `StubProvider`. The stub is
+  deterministic and keyless so the whole pipeline (collect → analyze → rank → apply) runs
+  offline and tests cost no tokens. The factory `get_provider()` returns the real provider
+  when a key is set, else the stub.
+- Pipeline per job: sanitize the posting (`posting_guard`, trust boundary) → detect
+  language → (if non-English) translate relevant fields → validate against the **effective
+  matching profile** → produce `match_score (0-100)`, a laconic `explanation`,
+  `matching_skills`, `missing_requirements`.
+- **Weighted rubric**: four scored dimensions (Technical 0.30 / Experience 0.25 / Seniority
+  0.15 / Career alignment 0.30), each with a score + one-line reason, persisted as
+  `dimension_scores` so the overall number is explainable. Eligibility/language gates and
+  dealbreaker caps can override the weighted result.
+- **Advisory signals** (do not change the score): `posting_country` + `eligibility`
+  (`worldwide|restricted|unclear`) + `eligibility_note`, inferred from the posting.
+- **Gaps to close** (`learning_gaps`): the baseline/common missing skills worth learning
+  first, each `{skill, level: basic|average, why}` — the actionable subset of
+  `missing_requirements`.
+- **Laconic output**: explanation and dimension reasons are one short clause each, written
+  for the candidate to skim.
 - Prompt guardrail: **never invent qualifications**; score strictly from CV evidence and
-  the explicit profile.
-- Store original + translated summary; dashboard shows both.
-- All results persisted to avoid repeat calls.
+  the explicit profile. Editable prompts (`profile`, `analyze`) live in `ai/prompts.py`,
+  validated against a strict placeholder allowlist and overridable on `/prompts`.
+- Store original + translated summary; dashboard shows both. All results persisted to avoid
+  repeat calls. Editing a job's description marks its analysis `stale` (score kept, flagged)
+  without auto-rescoring.
 
 ## 5a. Application generation (the apply half of the funnel)
 Finding and scoring jobs only pays off if you then apply well. This stage turns a scored
@@ -202,13 +236,17 @@ job into a **sendable application**: a tailored cover letter + CV summary, groun
 in the active CV and matching profile.
 
 - **Contract**: `AIProvider.generate_application(...)` returns an `ApplicationDraft`
-  (`cover_letter_md`, `cv_summary_md`, `reviewer_notes`, `model`). Both providers implement
-  it; the `StubProvider` is deterministic and offline (assembles from profile facts,
-  invents nothing) so the pipeline and tests run without a key.
-- **Two-pass drafter → reviewer**: the Anthropic provider drafts, runs a reviewer critique
-  (a mandatory factual-grounding audit + missed-keyword/framing/tone feedback), then revises
-  once. The critique is persisted as `reviewer_notes`. The stub produces a grounding-focused
-  note deterministically.
+  (`cover_letter_md`, `cv_summary_md`, `cv_full_md`, `reviewer_notes`, `model`). Both
+  providers implement it; the `StubProvider` is deterministic and offline (assembles from
+  profile facts, invents nothing) so the pipeline and tests run without a key.
+- **Three-pass drafter → reviewer → revise**: the Anthropic provider drafts all three
+  documents, runs a reviewer critique (a mandatory factual-grounding audit across all three
+  + missed-keyword/framing/tone feedback, capped and laconic), then revises once. The
+  critique is persisted as `reviewer_notes`. The stub produces a grounding-focused note
+  deterministically.
+- **Robust JSON**: provider responses are repaired for the common failure of raw newlines
+  inside JSON string values (long Markdown), and truncation surfaces an actionable
+  "raise max_tokens" message. Token budgets are sized for the long multi-document output.
 - **Editable prompts**: three new prompts — `application` (drafter), `application_review`
   (reviewer), and `application_revise` (applies the critique) — live in `ai/prompts.py`
   `SPECS`, overridable and validated on the `/prompts` page exactly like `profile`/`analyze`.
@@ -224,7 +262,7 @@ in the active CV and matching profile.
   the worker, advisory-locked, posting text sanitized via `posting_guard` first. A CV change
   invalidates old applications; "Regenerate" resets the row to `pending`. Generation is
   opt-in per job (the user clicks **Generate application**), never run over the whole backlog.
-- **Never invent** (design §... the non-negotiable rule): every claim traces to the CV +
+- **Never invent** (the non-negotiable rule, §5): every claim traces to the CV +
   effective profile. A missing requirement is stated as an honest gap, never fabricated —
   enforced in both prompts, the revision step, and the stub.
 - **Markdown first**: output is Markdown — `cover_letter_md`, `cv_summary_md`, and
@@ -236,30 +274,58 @@ in the active CV and matching profile.
 
 ## 6. Web dashboard (requirement 7)
 Pages:
-- **Dashboard** — jobs ranked by `match_score`. Columns: title, company, location,
-  language, score, summary, discovered_at, original link. Filters: score, location,
-  company, language, status. Status actions: saved / dismissed / applied / interview.
-  Header shows last search time + recent errors. The expanded row also generates a
-  tailored application (cover letter + CV summary) for the job — edit, save, regenerate.
+- **Dashboard** — jobs ranked by `match_score`. Columns include score (with an
+  analysis-freshness dot: current / outdated / stale / pending / error), title, company,
+  location, work-type chip, eligibility chip, salary, language, status, and an **App**
+  indicator (none / drafting / ready / failed) for application generation. Filters: min
+  score, location, company, language, work type, eligibility, status, salary present/absent,
+  and application present/absent. The expanded row shows the score breakdown, matching
+  skills, missing requirements, the **gaps-to-close** list, a full-description editor (paste
+  the complete posting; marks the score stale), and the **application panel** — generate /
+  edit / regenerate the cover letter, CV summary, and full tailored CV, plus reviewer notes.
 - **CV** — upload/replace (PDF/DOCX), shows active CV extraction status + derived profile,
   and lets the user edit the matching profile (must-haves / dealbreakers / etc.).
-- **Queries** — list/add/edit/enable/disable/delete; includes the predefined DevOps query.
+- **Queries** — list/add/edit/enable/disable/delete; includes the predefined DevOps queries.
+- **Insights** — a persisted snapshot aggregating, across ALL analyzed jobs for the active
+  CV, the skills in `missing_requirements` the CV does not cover, ranked by how many
+  postings asked for each. Grouping is two-layered: a deterministic casefold + alias merge
+  (free, always), then a best-effort **AI canonicalization pass** on Refresh that clusters
+  semantic duplicates the string rules miss (e.g. "Linux", "Linux (not evidenced)",
+  "Linux-based infrastructure operation" → one "Linux"). If the AI call fails, the
+  deterministic grouping stands — Insights never breaks. Severity (`basic`/`average`) and a
+  representative reason come from `learning_gaps`. The snapshot is user-driven: **Refresh**
+  recomputes + overwrites, **Clear** deletes; nothing auto-deletes or auto-recomputes it,
+  and a snapshot computed against a now-replaced CV is kept and shown with a "Refresh to
+  update" hint. Upstream, the `analyze` prompt emits bare canonical skill names (no
+  qualifiers) so new analyses need less grouping.
+- **Prompts** — view/edit/reset the six editable AI prompts (`profile`, `analyze`,
+  `application`, `application_review`, `application_revise`, `insights_canonicalize`),
+  validated against their required-placeholder allowlist.
 
 ## 7. API surface (FastAPI)
+Ingress strips the `/api` prefix, so routes are root-level.
 ```
-GET    /jobs?min_score&location&company&language&status&sort
-PATCH  /jobs/{id}        (status)
-POST   /jobs/manual      (paste a URL → fetch metadata → queue analysis)
-POST   /jobs/{id}/reanalyze
-GET    /jobs/{id}/application    (current tailored application for the active CV)
-POST   /jobs/{id}/application    (queue/regenerate; worker drafts → reviews → revises)
-PATCH  /jobs/{id}/application    (save user edits to the cover letter / CV summary)
+GET    /jobs?min_score&location&company&language&work_type&eligibility&status
+                &has_salary&has_application&sort
+GET    /jobs/{id}                 (full single job incl. description; lazy-loaded on edit)
+PATCH  /jobs/{id}                 (status / salary / description; description edit → stale)
+POST   /jobs/manual               (add a job by hand: URL and/or title + details → queue analysis)
+POST   /jobs/{id}/reanalyze       (queue a fresh analysis)
+GET    /jobs/{id}/application     (current tailored application for the active CV)
+POST   /jobs/{id}/application     (queue/regenerate; worker drafts → reviews → revises)
+PATCH  /jobs/{id}/application     (save edits to cover letter / CV summary / full CV)
+POST   /analyze                   (queue the whole un-analyzed backlog vs the active CV)
+POST   /jobs/purge-irrelevant     (one-time cleanup of non-DevOps titles)
 GET    /queries   POST /queries   PATCH /queries/{id}   DELETE /queries/{id}
-POST   /queries/{id}/run   (manual trigger)
-GET    /cv        POST /cv (upload → extract → discard file)
-GET    /profile   PATCH /profile   (editable matching profile)
-GET    /status    (last run, errors, counts)
-GET    /healthz   /readyz          (k8s probes)
+POST   /queries/{id}/run          (manual trigger)
+GET    /sources                   (registered source names)
+GET    /cv        POST /cv        (upload → extract → discard file)
+GET    /profile   PATCH /profile  (editable matching profile)
+GET    /prompts   PUT /prompts/{key}   POST /prompts/{key}/reset   (editable AI prompts)
+GET    /insights  POST /insights/refresh  DELETE /insights   (skill-gap snapshot;
+                                            refresh runs the AI canonicalization pass)
+GET    /status                    (last run, errors, counts)
+GET    /healthz   /readyz         (k8s probes)
 ```
 
 ## 8. Configuration (env, server-side)
@@ -309,3 +375,44 @@ Use **sample job fixtures** to validate end-to-end before hitting live feeds.
 8. Next.js dashboard, CV/profile, queries pages.
 9. Kustomize base (Deployments/Services/Ingress/ConfigMap/PDB/probes, CNPG consumption).
 10. Tests + README.
+
+## 12. Current state & scope boundaries
+
+Shipped beyond the original §1–§11 design (all behind the same `AIProvider` seam and the
+`(job_id, cv_id)` caching/queue model):
+
+- **Application generation** (§5a): tailored cover letter + CV summary + **full tailored
+  CV**, with a drafter → reviewer → revise loop and three editable prompts.
+- **Explainable scoring**: per-dimension breakdown, laconic output, and a **gaps-to-close**
+  list of baseline skills to learn first.
+- **Eligibility / location signal** per job (advisory; EU-remote focus).
+- **Insights page**: a persisted, user-driven snapshot of the skill gaps most often asked
+  for across analyzed jobs, ranked by frequency with basic/average severity — your
+  "what to learn first" view.
+- **Manual full-description paste** that marks a stale score without auto-rescoring.
+- **Truncated-description marker**: jobs with a cut-off description are flagged
+  ("⚠ needs full description", filterable) and held back from scoring until fixed.
+- **Fully manual job entry** from the dashboard (title/URL, company, location, work type,
+  salary, description).
+- **Dashboard filters & indicators**: work type, eligibility, salary present/absent,
+  application present/absent, plus analysis-freshness and application-state indicators.
+- **Rollout**: Argo Rollouts blue-green for api/web (active + preview services); image tags
+  pinned in `k3s-lab`, this base defaults them only for a standalone build.
+
+Deliberately **not built** (flagged won't-do / later — recorded so the choices are explicit,
+not accidental gaps). The guiding principle is "the smallest thing that lands a DevOps job,"
+so these were judged off-path:
+
+| Item | Status | Rationale |
+|---|---|---|
+| Server-side PDF / LaTeX compilation | Won't do | The full CV is clean, PDF-ready Markdown; the user renders the PDF. Avoids bloating the backend image with a TeX/HTML-render toolchain. |
+| ATS text-layer / keyword-stuffing checks | Won't do | Matters for big-corp ATS funnels; polish for targeted DevOps applications. Revisit only if auto-rejections appear. |
+| Interview prep / mock | Later | Useful only once applications land interviews — correctly sequenced after this stage. |
+| Outcome tracking / follow-ups | Later / maybe never | A spreadsheet covers one person's search. |
+| Salary benchmarking | Skip | Needs a salary dataset we don't have; manual salary edit + eligibility signal suffice. |
+| Upskill / long-term gap analysis | Skip | Career-planning, orthogonal to landing *this* job (distinct from the per-job `learning_gaps`). |
+| LinkedIn auto-polling | Locked out | ToS + anti-bot; LinkedIn stays a manual reference (stored URL + paste). |
+| Message broker (Redis/Celery) | Not needed | The DB-backed queue + leader-elected worker is enough for homelab volume. |
+
+If a second AI provider is ever added, see **`docs/ai-provider-swap.md`** — the seam is
+ready; only config and one shared JSON helper need a small, contained change.
