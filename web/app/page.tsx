@@ -432,6 +432,9 @@ export default function Dashboard() {
   const [salaryFilter, setSalaryFilter] = useState(""); // "" | "yes" | "no"
   const [appFilter, setAppFilter] = useState(""); // "" | "yes" | "no"
   const [descFilter, setDescFilter] = useState(""); // "" | "incomplete" | "complete"
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [sources, setSources] = useState<string[]>([]);
+  const [showRemoved, setShowRemoved] = useState(false); // review list of removed jobs
 
   const load = useCallback(async () => {
     setErr(null);
@@ -447,14 +450,17 @@ export default function Dashboard() {
       if (salaryFilter) params.has_salary = salaryFilter === "yes" ? "true" : "false";
       if (appFilter) params.has_application = appFilter === "yes" ? "true" : "false";
       if (descFilter) params.description_incomplete = descFilter === "incomplete" ? "true" : "false";
-      const [j, s] = await Promise.all([api.jobs(params), api.status()]);
+      if (sourceFilter) params.source = sourceFilter;
+      if (showRemoved) params.removed = "true";
+      const [j, s, src] = await Promise.all([api.jobs(params), api.status(), api.jobSources()]);
       setJobs(j);
       setStatus(s);
+      setSources(src);
     } catch (e) {
       setErr(String(e));
     }
   }, [minScore, location, company, language, workType, eligibility, statusFilter,
-      salaryFilter, appFilter, descFilter]);
+      salaryFilter, appFilter, descFilter, sourceFilter, showRemoved]);
 
   const incompleteCount = jobs.filter((j) => j.description_incomplete).length;
 
@@ -507,6 +513,21 @@ export default function Dashboard() {
     load();
   }
 
+  async function setRemoved(j: Job, removed: boolean) {
+    const verb = removed ? "Remove" : "Restore";
+    const note = removed
+      ? "It is hidden from the dashboard but kept in the database; you can restore it later."
+      : "It returns to the normal dashboard.";
+    if (!window.confirm(`${verb} "${j.title}"?\n\n${note}`)) return;
+    try {
+      await api.setJobRemoved(j.id, removed);
+      if (expanded === j.id) setExpanded(null);
+      await load();
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
   async function saveSalary(id: number, salary: string) {
     try {
       await api.setJobSalary(id, salary);
@@ -549,6 +570,10 @@ export default function Dashboard() {
               : "No searches run yet"}
             {status && (
               <> · {status.jobs_total} jobs · {status.jobs_analyzed} analyzed
+              · <button className="linklike" onClick={() => setShowRemoved(!showRemoved)}
+                        title="Removed jobs are hidden but kept; click to review or restore them">
+                  {status.jobs_removed} removed{showRemoved ? " (hide)" : " (review)"}
+                </button>
               {!status.ai_enabled && <span className="badge" style={{ marginLeft: 8 }}>AI: stub</span>}</>
             )}
           </div>
@@ -614,6 +639,11 @@ export default function Dashboard() {
             <option value="yes">Has application</option>
             <option value="no">No application</option>
           </select>
+          <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}
+                  title="Filter by where the job came from">
+            <option value="">All sources</option>
+            {sources.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
           <select value={descFilter} onChange={(e) => setDescFilter(e.target.value)}
                   title="Filter by whether the description looks truncated">
             <option value="">Any description</option>
@@ -624,6 +654,12 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {showRemoved && (
+        <div className="panel detail">
+          Showing <strong>removed</strong> jobs only. Restore one to return it to the dashboard.{" "}
+          <button className="secondary" onClick={() => setShowRemoved(false)}>Back to dashboard</button>
+        </div>
+      )}
       {msg && <div className="panel">{msg}</div>}
       {err && <div className="panel error">{err}</div>}
 
@@ -639,7 +675,9 @@ export default function Dashboard() {
           </thead>
           <tbody>
             {jobs.length === 0 && (
-              <tr><td colSpan={12} className="muted">No jobs yet. Run a search.</td></tr>
+              <tr><td colSpan={12} className="muted">
+                {showRemoved ? "No removed jobs." : "No jobs yet. Run a search."}
+              </td></tr>
             )}
             {jobs.map((j) => (
               <Fragment key={j.id}>
@@ -725,6 +763,11 @@ export default function Dashboard() {
                     <button className="secondary"
                             onClick={() => setExpanded(expanded === j.id ? null : j.id)}>
                       {expanded === j.id ? "Hide" : "Details"}
+                    </button>{" "}
+                    <button className="secondary" onClick={() => setRemoved(j, !j.removed)}
+                            title={j.removed ? "Return this job to the dashboard"
+                                             : "Hide this job (gone online / not relevant)"}>
+                      {j.removed ? "Restore" : "Remove"}
                     </button>
                   </td>
                 </tr>
