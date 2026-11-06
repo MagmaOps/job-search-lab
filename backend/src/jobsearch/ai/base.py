@@ -54,6 +54,27 @@ class LearningGap:
         return {"skill": self.skill, "level": self.level, "why": self.why}
 
 
+# Rubric weights and cap ceilings from the analyze prompt. Code recomputes match_score from
+# these instead of trusting the model's arithmetic (LLMs get weighted averages slightly wrong).
+DIMENSION_WEIGHTS = {
+    "technical": 0.35,
+    "experience": 0.25,
+    "seniority": 0.15,
+    "role_alignment": 0.15,
+    "logistics": 0.10,
+}
+CAP_CEILINGS = {"legal_eligibility": 15, "dealbreaker": 20, "language": 20, "core_gaps": 50}
+
+
+def finalize_score(dims: list[DimensionScore], caps: list[str]) -> int:
+    """Weighted average of the dimensions, then the lowest triggered cap. Unknown caps ignored."""
+    score = round(sum(d.score * d.weight for d in dims))
+    ceilings = [CAP_CEILINGS[c] for c in caps if c in CAP_CEILINGS]
+    if ceilings:
+        score = min(score, *ceilings)
+    return max(0, min(100, score))
+
+
 @dataclass
 class MatchResult:
     """Outcome of validating one job against the effective matching profile."""

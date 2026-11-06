@@ -213,11 +213,14 @@ insights                   -- persisted skill-gap snapshot (see §6); user-drive
   language → (if non-English) translate relevant fields → validate against the **effective
   matching profile** → produce `match_score (0-100)`, a laconic `explanation`,
   `matching_skills`, `missing_requirements`.
-- **Weighted rubric**: four scored dimensions (Technical 0.30 / Experience 0.25 / Seniority
-  0.15 / Career alignment 0.30), each with a score + one-line reason, persisted as
-  `dimension_scores` so the overall number is explainable. Eligibility/language gates and
-  dealbreaker caps can override the weighted result.
-- **Advisory signals** (do not change the score): `posting_country` + `eligibility`
+- **Weighted rubric**: five scored dimensions (technical 0.35 / experience 0.25 / seniority
+  0.15 / role_alignment 0.15 / logistics 0.10), each with a score + one-line reason,
+  persisted as `dimension_scores` so the overall number is explainable. Caps
+  (`legal_eligibility` 15, `dealbreaker` 20, `language` 20, `core_gaps` 50; lowest wins)
+  override the weighted result. The model reports `caps_applied` names; code recomputes
+  `match_score` from the dimension scores and fixed weights (`ai/base.py finalize_score`)
+  rather than trusting the model's arithmetic.
+- **Advisory signals** (only `logistics` is affected; explicit legal requirements are the `legal_eligibility` cap): `posting_country` + `eligibility`
   (`worldwide|restricted|unclear`) + `eligibility_note`, inferred from the posting.
 - **Gaps to close** (`learning_gaps`): the baseline/common missing skills worth learning
   first, each `{skill, level: basic|average, why}` — the actionable subset of
