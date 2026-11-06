@@ -46,7 +46,7 @@ def test_dealbreaker_caps_score(db):
     _seed_job(db, title="PhpDev", desc="php php kubernetes")
     analysis_service.analyze_pending(db)
     a = db.query(Analysis).one()
-    assert a.match_score <= 10
+    assert a.match_score <= 20
 
 
 def test_no_active_cv_processes_nothing(db):
@@ -86,7 +86,7 @@ def test_analysis_persists_dimension_breakdown(db):
 
     assert a.dimension_scores, "expected a per-dimension breakdown"
     names = {d["dimension"] for d in a.dimension_scores}
-    assert {"Technical skills", "Experience match", "Seniority fit", "Career alignment"} <= names
+    assert {"technical", "experience", "seniority", "role_alignment", "logistics"} == names
     # Each dimension carries a score, a weight, and a human-readable reason.
     for d in a.dimension_scores:
         assert 0 <= d["score"] <= 100
@@ -206,3 +206,11 @@ def test_error_retry_cap(db):
                     processing_status=ProcessingStatus.error, retry_count=3))
     db.commit()
     assert analysis_service.analyze_pending(db) == 0
+
+
+def test_finalize_score_recomputes_and_applies_lowest_cap():
+    from jobsearch.ai.base import DimensionScore, finalize_score
+
+    dims = [DimensionScore("technical", 100, 0.5), DimensionScore("experience", 80, 0.5)]
+    assert finalize_score(dims, []) == 90
+    assert finalize_score(dims, ["core_gaps", "legal_eligibility", "bogus"]) == 15

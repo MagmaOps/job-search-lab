@@ -11,11 +11,13 @@ import json
 from ..config import Settings
 from . import prompts
 from .base import (
+    DIMENSION_WEIGHTS,
     ApplicationDraft,
     DimensionScore,
     LearningGap,
     MatchResult,
     ProfileExtraction,
+    finalize_score,
 )
 
 
@@ -99,12 +101,16 @@ class AnthropicProvider:
             title=job_title,
             description=(job_description or "")[:12000],
         )
-        # The analyze response carries explanation + a 4-row dimension_scores breakdown +
+        # The analyze response carries explanation + a 5-row dimension_scores breakdown +
         # eligibility fields + translated_summary; 1800 tokens truncated the JSON, so give
         # it headroom.
         data = self._complete_json(prompt, max_tokens=3000)
-        score = int(data.get("match_score", 0))
-        score = max(0, min(100, score))
+        dims = _parse_dimensions(data.get("dimension_scores"))
+        if dims:
+            caps = [str(c) for c in data.get("caps_applied") or []]
+            score = finalize_score(dims, caps)
+        else:
+            score = max(0, min(100, int(data.get("match_score", 0))))
         return MatchResult(
             match_score=score,
             explanation=str(data.get("explanation", "")),
@@ -112,7 +118,7 @@ class AnthropicProvider:
             missing_requirements=list(data.get("missing_requirements") or []),
             detected_language=data.get("detected_language") or job_language,
             translated_summary=data.get("translated_summary"),
-            dimension_scores=_parse_dimensions(data.get("dimension_scores")),
+            dimension_scores=dims,
             learning_gaps=_parse_learning_gaps(data.get("learning_gaps")),
             posting_country=data.get("posting_country") or None,
             eligibility=_norm_eligibility(data.get("eligibility")),
@@ -325,12 +331,13 @@ def _parse_dimensions(raw: object) -> list[DimensionScore]:
             continue
         try:
             dim_score = max(0, min(100, int(item.get("score", 0))))
-            weight = float(item.get("weight", 0) or 0)
+            name = str(item["dimension"])
+            weight = DIMENSION_WEIGHTS.get(name, float(item.get("weight", 0) or 0))
         except (TypeError, ValueError):
             continue
         out.append(
             DimensionScore(
-                dimension=str(item["dimension"]),
+                dimension=name,
                 score=dim_score,
                 weight=weight,
                 reason=str(item.get("reason", "")),

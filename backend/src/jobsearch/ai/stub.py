@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import re
 
-from .base import ApplicationDraft, DimensionScore, MatchResult, ProfileExtraction
+from .base import (
+    DIMENSION_WEIGHTS,
+    ApplicationDraft,
+    DimensionScore,
+    MatchResult,
+    ProfileExtraction,
+    finalize_score,
+)
 
 try:  # langdetect is optional at runtime; degrade gracefully
     from langdetect import detect as _detect_lang
@@ -124,55 +131,57 @@ class StubProvider:
         matched = sorted({s for s in wanted if s and s in job_toks})
         missing = sorted({s for s in must if s and s not in job_toks})
 
-        # ── Per-dimension scores (weights mirror the analyze prompt's rubric) ──
-        # 1. Technical skills (30%): must-haves weighted heavily, extras lightly.
+        # ── Per-dimension scores (names/weights mirror the analyze prompt; see base.py) ──
+        w = DIMENSION_WEIGHTS
+        # 1. Technical: must-haves weighted heavily, extras lightly.
         must_hit = sum(1 for s in must if s in job_toks)
         nice_hit = sum(1 for s in (nice + derived) if s in job_toks)
         must_total = max(len(must), 1)
         technical = int(70 * (must_hit / must_total) + min(30, nice_hit * 5))
 
-        # 2. Experience/function match (25%): any profile skill surfacing in the job.
+        # 2. Experience/function match: any profile skill surfacing in the job.
         derived_hit = sum(1 for s in derived if s in job_toks)
         experience = min(100, 40 + derived_hit * 15) if derived else 40
 
-        # 3. Seniority fit (15%): does the job text mention the profile's seniority band?
+        # 3. Seniority (level only): does the job text mention the profile's seniority band?
         min_sen = (effective_profile.get("min_seniority") or "").lower()
         seniority = 70
         if min_sen:
             seniority = 85 if min_sen in text.lower() else 55
 
-        # 4. Career/role alignment (30%): proxied by overall skill overlap presence.
+        # 4. Role alignment: proxied by overall skill overlap presence.
         alignment = 75 if matched else 45
 
+        # 5. Logistics: neutral unless the posting is restricted to somewhere else.
+        logistics = 20 if eligibility == "restricted" else 70
+
         dims = [
-            DimensionScore("Technical skills", technical, 0.30,
+            DimensionScore("technical", technical, w["technical"],
                            f"{must_hit}/{must_total} must-haves, {nice_hit} extra(s)"),
-            DimensionScore("Experience match", experience, 0.25,
+            DimensionScore("experience", experience, w["experience"],
                            f"{derived_hit} CV skill(s) in posting"),
-            DimensionScore("Seniority fit", seniority, 0.15,
+            DimensionScore("seniority", seniority, w["seniority"],
                            f"min '{min_sen or 'unset'}' "
                            + ("named" if seniority >= 85 else "not named")),
-            DimensionScore("Career alignment", alignment, 0.30,
+            DimensionScore("role_alignment", alignment, w["role_alignment"],
                            "skills overlap" if matched else "little overlap"),
+            DimensionScore("logistics", logistics, w["logistics"],
+                           "restricted region" if logistics < 70 else "neutral"),
         ]
-        score = int(round(sum(d.score * d.weight for d in dims)))
 
-        # Mirror the analyze-prompt gates/caps so the offline pipeline behaves like the
-        # documented rules (dealbreaker > eligibility/clearance > the weighted score).
-        caps: list[int] = []
+        # Mirror the analyze-prompt caps so the offline pipeline behaves like the documented
+        # rules; finalize_score applies the lowest one.
+        caps: list[str] = []
         if any(d in job_toks for d in dealbreakers):
-            caps.append(10)
+            caps.append("dealbreaker")
         clearance_terms = (
             "security clearance", "clearance required", "must be a citizen",
             "citizenship required", "permanent resident",
         )
         if any(term in text.lower() for term in clearance_terms):
-            caps.append(15)
+            caps.append("legal_eligibility")
             missing = sorted(set(missing) | {"eligibility / clearance requirement"})
-        if caps:
-            score = min(score, *caps)
-
-        score = max(0, min(100, score))
+        score = finalize_score(dims, caps)
 
         lang = job_language
         if not lang and _detect_lang:
