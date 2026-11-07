@@ -28,11 +28,15 @@ class AnthropicProvider:
         self._client = Anthropic(api_key=settings.anthropic_api_key)
         self.model = settings.ai_model
 
-    def _complete_json(self, prompt: str, max_tokens: int = 1024) -> dict:
+    def _complete_json(
+        self, prompt: str, max_tokens: int = 1024, thinking: dict | None = None
+    ) -> dict:
+        extra = {"thinking": thinking} if thinking else {}
         msg = self._client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
+            **extra,
         )
         text = "".join(
             block.text for block in msg.content if getattr(block, "type", "") == "text"
@@ -103,8 +107,10 @@ class AnthropicProvider:
         )
         # The analyze response carries explanation + a 5-row dimension_scores breakdown +
         # eligibility fields + translated_summary; 1800 tokens truncated the JSON, so give
-        # it headroom.
-        data = self._complete_json(prompt, max_tokens=3000)
+        # it headroom. Haiku 5.5 thinks by default and thinking tokens count against
+        # max_tokens; the v1.7.0 prompt (weights + caps) made it think until the JSON was
+        # cut off or empty. The score is recomputed in code, so thinking is not needed.
+        data = self._complete_json(prompt, max_tokens=3000, thinking={"type": "disabled"})
         dims = _parse_dimensions(data.get("dimension_scores"))
         if dims:
             caps = [str(c) for c in data.get("caps_applied") or []]

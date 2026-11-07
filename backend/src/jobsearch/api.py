@@ -51,7 +51,7 @@ from .sources import source_names
 from .sources.base import normalize_work_type
 
 settings = get_settings()
-app = FastAPI(title="Job Search Lab", version="1.7.0")
+app = FastAPI(title="Job Search Lab", version="1.7.1")
 
 app.add_middleware(
     CORSMiddleware,
