@@ -283,7 +283,7 @@ Pages:
   location, work-type chip, eligibility chip, salary, language, status, and an **App**
   indicator (none / drafting / ready / failed) for application generation. Filters: min
   score, location, company, language, work type, eligibility, status, salary present/absent,
-  and application present/absent. The expanded row shows the score breakdown, matching
+  application present/absent, and found/added date range (inclusive; same From/To = one day). The expanded row shows the score breakdown, matching
   skills, missing requirements, the **gaps-to-close** list, a full-description editor (paste
   the complete posting; marks the score stale), and the **application panel** — generate /
   edit / regenerate the cover letter, CV summary, and full tailored CV, plus reviewer notes.

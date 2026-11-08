@@ -434,6 +434,8 @@ export default function Dashboard() {
   const [descFilter, setDescFilter] = useState(""); // "" | "incomplete" | "complete"
   const [sourceFilter, setSourceFilter] = useState("");
   const [sources, setSources] = useState<string[]>([]);
+  const [foundFrom, setFoundFrom] = useState(""); // YYYY-MM-DD, inclusive
+  const [foundTo, setFoundTo] = useState("");
   const [showRemoved, setShowRemoved] = useState(false); // review list of removed jobs
 
   const load = useCallback(async () => {
@@ -451,6 +453,8 @@ export default function Dashboard() {
       if (appFilter) params.has_application = appFilter === "yes" ? "true" : "false";
       if (descFilter) params.description_incomplete = descFilter === "incomplete" ? "true" : "false";
       if (sourceFilter) params.source = sourceFilter;
+      if (foundFrom) params.found_from = foundFrom;
+      if (foundTo) params.found_to = foundTo;
       if (showRemoved) params.removed = "true";
       const [j, s, src] = await Promise.all([api.jobs(params), api.status(), api.jobSources()]);
       setJobs(j);
@@ -460,7 +464,7 @@ export default function Dashboard() {
       setErr(String(e));
     }
   }, [minScore, location, company, language, workType, eligibility, statusFilter,
-      salaryFilter, appFilter, descFilter, sourceFilter, showRemoved]);
+      salaryFilter, appFilter, descFilter, sourceFilter, foundFrom, foundTo, showRemoved]);
 
   const incompleteCount = jobs.filter((j) => j.description_incomplete).length;
 
@@ -644,6 +648,12 @@ export default function Dashboard() {
             <option value="">All sources</option>
             {sources.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+          <input type="date" value={foundFrom} max={foundTo || undefined}
+                 onChange={(e) => setFoundFrom(e.target.value)}
+                 title="Found/added from (inclusive)" />
+          <input type="date" value={foundTo} min={foundFrom || undefined}
+                 onChange={(e) => setFoundTo(e.target.value)}
+                 title="Found/added to (inclusive); same as From = a single day" />
           <select value={descFilter} onChange={(e) => setDescFilter(e.target.value)}
                   title="Filter by whether the description looks truncated">
             <option value="">Any description</option>
