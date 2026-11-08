@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, time, timedelta
+
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select, text
@@ -51,7 +53,7 @@ from .sources import source_names
 from .sources.base import normalize_work_type
 
 settings = get_settings()
-app = FastAPI(title="Job Search Lab", version="1.7.1")
+app = FastAPI(title="Job Search Lab", version="1.8.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -99,6 +101,8 @@ def list_jobs(
     has_application: bool | None = None,
     description_incomplete: bool | None = None,
     source: str | None = None,
+    found_from: date | None = None,
+    found_to: date | None = None,
     removed: bool = False,
     sort: str = "score",
 ) -> list[JobOut]:
@@ -130,6 +134,12 @@ def list_jobs(
     q = q.filter(Job.removed.is_(True) if removed else Job.removed.isnot(True))
     if source:
         q = q.filter(Job.source == source)
+    # Inclusive day range on discovered_at (UTC); from == to selects a single day.
+    if found_from:
+        q = q.filter(Job.discovered_at >= datetime.combine(found_from, time.min))
+    if found_to:
+        end = datetime.combine(found_to + timedelta(days=1), time.min)
+        q = q.filter(Job.discovered_at < end)
     if location:
         q = q.filter(Job.location.ilike(f"%{location}%"))
     if company:

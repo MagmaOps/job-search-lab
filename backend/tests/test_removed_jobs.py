@@ -71,3 +71,26 @@ def test_source_filter_and_list(ctx):
 
     assert client.get("/jobs/sources").json() == ["manual", "remoteok"]
     assert [j["source"] for j in client.get("/jobs?source=manual").json()] == ["manual"]
+
+
+def test_found_date_range_is_inclusive(ctx):
+    from datetime import datetime
+
+    from jobsearch.models import Job
+
+    client, db = ctx
+    for n in (1, 2, 3):
+        ingest_job(db, _raw(n))
+    db.commit()
+    for jid, ts in {1: datetime(2026, 11, 1, 0, 0), 2: datetime(2026, 11, 2, 23, 59),
+                    3: datetime(2026, 11, 4, 12, 0)}.items():
+        db.get(Job, jid).discovered_at = ts
+    db.commit()
+
+    def ids(qs):
+        return sorted(j["id"] for j in client.get(f"/jobs?{qs}").json())
+
+    assert ids("found_from=2026-11-02&found_to=2026-11-02") == [2]  # single day
+    assert ids("found_from=2026-11-02") == [2, 3]
+    assert ids("found_to=2026-11-02") == [1, 2]
+    assert ids("found_from=2026-11-01&found_to=2026-11-04") == [1, 2, 3]
